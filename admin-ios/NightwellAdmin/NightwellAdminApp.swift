@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import Security
+import Charts
 
 enum AdminService: String, CaseIterable, Identifiable {
     case music, chat
@@ -14,6 +15,12 @@ enum AdminService: String, CaseIterable, Identifiable {
         URL(string: self == .music ? "https://music.nightwell.fun" : "https://chat.nightwell.fun/docs")!
     }
     var port: Int { self == .music ? 8080 : 8009 }
+}
+
+struct ProbeSample: Identifiable {
+    let id = UUID()
+    let time: Date
+    let ms: Int
 }
 
 struct ProbeStatus {
@@ -111,6 +118,7 @@ enum TokenVault {
 
 @MainActor final class AdminModel: ObservableObject {
     @Published var probes: [AdminService: ProbeStatus] = [:]
+    @Published var history: [AdminService: [ProbeSample]] = [:]
     @Published var admin: AdminStatus?
     @Published var adminError = ""
     @Published var notice = ""
@@ -151,6 +159,7 @@ enum TokenVault {
             let total = max(0, Int(Date().timeIntervalSince(start) * 1000))
             let network = collector.take()?.transactionMetrics.last
             let ttfb = durationMs(network?.requestStartDate, network?.responseStartDate)
+            let wasOnline = probes[service]?.available == true
             probes[service] = ProbeStatus(
                 available: ok,
                 statusText: ok ? "Доступен" : "HTTP \(http.statusCode)",
@@ -162,7 +171,15 @@ enum TokenVault {
                 reusedConnection: network?.isReusedConnection ?? false,
                 checkedAt: Date()
             )
+            if ok {
+                var samples = history[service, default: []]
+                samples.append(ProbeSample(time: Date(), ms: total))
+                history[service] = Array(samples.suffix(80))
+            } else if wasOnline && (UserDefaults.standard.object(forKey: "nightwell.admin.alerts") as? Bool ?? true) {
+                notice = "\(service.name): сервер начал возвращать HTTP \(http.statusCode)."
+            }
         } catch {
+            let wasOnline = probes[service]?.available == true
             probes[service] = ProbeStatus(
                 available: false,
                 statusText: error.localizedDescription,
@@ -172,6 +189,9 @@ enum TokenVault {
                 reusedConnection: false,
                 checkedAt: Date()
             )
+            if wasOnline && (UserDefaults.standard.object(forKey: "nightwell.admin.alerts") as? Bool ?? true) {
+                notice = "\(service.name): соединение потеряно. \(error.localizedDescription)"
+            }
         }
     }
 
@@ -259,20 +279,34 @@ enum TokenVault {
 
 @main struct NightwellAdminApp: App {
     @StateObject private var model = AdminModel()
+    @AppStorage("nightwell.admin.autorefresh") private var autoRefresh = true
     var body: some Scene {
         WindowGroup {
-            TabView {
-                NavigationStack { ServiceScreen(service: .music) }
-                    .tabItem { Label("Музыка", systemImage: "music.note") }
-                NavigationStack { ServiceScreen(service: .chat) }
-                    .tabItem { Label("Чат", systemImage: "message") }
-                NavigationStack { AdminSettingsScreen() }
-                    .tabItem { Label("Настройки", systemImage: "gearshape") }
+            ZStack {
+                Color.black.ignoresSafeArea()
+                TabView {
+                    NavigationStack { AdminServiceScreen(service: .music) }
+                        .tabItem { Label("Музыка", systemImage: "music.note") }
+                    NavigationStack { AdminServiceScreen(service: .chat) }
+                        .tabItem { Label("Чат", systemImage: "message.fill") }
+                    NavigationStack { AdminSettingsScreen() }
+                        .tabItem { Label("Настройки", systemImage: "gearshape.fill") }
+                }
+                .toolbarBackground(.visible, for: .tabBar)
+                .toolbarBackground(Color.black.opacity(0.93), for: .tabBar)
             }
             .environmentObject(model)
             .tint(.white)
             .preferredColorScheme(.dark)
-            .task { await model.refreshAll() }
+            .task {
+                await model.refreshAll()
+                while !Task.isCancelled {
+                    let interval = max(1, UserDefaults.standard.integer(forKey: "nightwell.admin.refreshminutes"))
+                    try? await Task.sleep(for: .seconds(Double(interval * 60)))
+                    if Task.isCancelled { break }
+                    if autoRefresh { await model.refreshAll() }
+                }
+            }
             .alert("Nightwell Admin",
                    isPresented: Binding(get: { !model.notice.isEmpty },
                                         set: { if !$0 { model.notice = "" } })) {
@@ -301,238 +335,3 @@ enum TokenVault {
     }
 }
 
-struct AdminPanel<Content: View>: View {
-    let content: Content
-    init(@ViewBuilder content: () -> Content) { self.content = content() }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) { content }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(white: 0.10), in: RoundedRectangle(cornerRadius: 22))
-            .overlay(RoundedRectangle(cornerRadius: 22).stroke(.white.opacity(0.10)))
-    }
-}
-
-struct ServiceScreen: View {
-    @EnvironmentObject var model: AdminModel
-    let service: AdminService
-    @State private var pendingAction: String?
-    @State private var confirmAction = false
-
-    private var remote: RemoteService? { model.admin?.services[service.rawValue] }
-    private var probe: ProbeStatus? { model.probes[service] }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 14) {
-                    Image(systemName: service.symbol)
-                        .font(.system(size: 32, weight: .light))
-                        .frame(width: 72, height: 72)
-                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 20))
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(service.name).font(.title2.bold())
-                        Text("Nightwell • Сервер").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }.padding(.top, 10)
-
-                AdminPanel {
-                    Text("ПУБЛИЧНЫЙ СЕРВИС").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    HStack(spacing: 10) {
-                        Image(systemName: probe?.available == true ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .foregroundStyle(probe?.available == true ? .green : .orange)
-                        Text(probe?.statusText ?? "Проверка…")
-                            .font(.headline)
-                        Spacer()
-                        if let ms = probe?.totalMs {
-                            Text("\(ms) мс").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    Divider().overlay(.white.opacity(0.1))
-                    Text("ЗАДЕРЖКА HTTPS")
-                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    HStack(spacing: 12) {
-                        metricTile("TTFB", probe?.ttfbMs)
-                        metricTile("Весь запрос", probe?.totalMs)
-                    }
-                    Text("TTFB: время обработки и передачи первого байта после отправки запроса. Полное время включает DNS, TCP, TLS и загрузку. Это не ICMP-пинг.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    if let probe {
-                        if let dns = probe.dnsMs { infoRow("DNS", "\(dns) мс") }
-                        if let tcp = probe.tcpMs { infoRow("TCP", "\(tcp) мс") }
-                        if let tls = probe.tlsMs { infoRow("TLS", "\(tls) мс") }
-                        if probe.reusedConnection {
-                            Label("Повторно использовано HTTPS-соединение", systemImage: "arrow.triangle.2.circlepath")
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                    Divider().overlay(.white.opacity(0.1))
-                    infoRow("HTTPS", service.publicURL.host ?? "")
-                    infoRow("Локальный порт", "\(service.port)")
-                    if let date = probe?.checkedAt {
-                        infoRow("Проверено", date.formatted(date: .omitted, time: .shortened))
-                    }
-                    Link(destination: service.browserURL) {
-                        Label("Открыть сервис", systemImage: "arrow.up.right")
-                            .font(.subheadline.weight(.medium))
-                    }
-                }
-
-                AdminPanel {
-                    Text("УПРАВЛЕНИЕ").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    HStack {
-                        Label(model.admin == nil ? "Нет подключения к админ-серверу" :
-                                (remote?.running == true ? "Процесс запущен" : "Процесс остановлен"),
-                              systemImage: remote?.running == true ? "checkmark.circle" : "info.circle")
-                            .font(.subheadline)
-                        Spacer()
-                    }
-                    if model.admin == nil {
-                        Text(model.adminError.isEmpty ? "Добавь ключ в настройках для управления." : model.adminError)
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-
-                    HStack(spacing: 10) {
-                        actionButton("Запустить", symbol: "play.fill", action: "start", enabled: remote?.can_start == true)
-                        actionButton("Остановить", symbol: "stop.fill", action: "stop", enabled: remote?.can_stop == true)
-                    }
-                    actionButton("Перезапустить", symbol: "arrow.clockwise", action: "restart",
-                                 enabled: remote?.can_restart == true)
-                    actionButton("Создать резервную копию", symbol: "externaldrive", action: "backup",
-                                 enabled: remote?.can_backup == true)
-                    actionButton("Установить обновление", symbol: "square.and.arrow.down", action: "update",
-                                 enabled: remote?.can_update == true)
-                    Button {
-                        Task { await model.loadLogs(service) }
-                    } label: {
-                        Label("Посмотреть логи", systemImage: "doc.text")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.admin == nil)
-                    Text("Кнопки доступны только для команд, которые заранее разрешены на твоём Windows-сервере.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-
-                Button {
-                    Task {
-                        await model.probe(service)
-                        await model.refreshAdmin()
-                    }
-                } label: {
-                    Label("Обновить состояние", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity)
-                }.buttonStyle(.borderedProminent)
-                    .tint(.white)
-                    .foregroundStyle(.black)
-            }.padding(18)
-        }
-        .background(.black)
-        .navigationTitle(service == .music ? "Музыка" : "Чат")
-        .navigationBarTitleDisplayMode(.inline)
-        .refreshable {
-            await model.probe(service)
-            await model.refreshAdmin()
-        }
-        .confirmationDialog("Подтвердить действие", isPresented: $confirmAction,
-                            titleVisibility: .visible) {
-            if let action = pendingAction {
-                Button(action == "stop" ? "Остановить сервис" :
-                        action == "update" ? "Установить обновление" :
-                        action == "restart" ? "Перезапустить сервис" :
-                        action == "backup" ? "Создать копию" : "Запустить сервис") {
-                    Task { await model.run(action, for: service) }
-                }
-            }
-            Button("Отмена", role: .cancel) { pendingAction = nil }
-        } message: {
-            Text("Действие будет выполнено на Windows-компьютере с Nightwell \(service == .chat ? "Chat" : "Music").")
-        }
-    }
-
-    private func metricTile(_ title: String, _ value: Int?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value.map { "\($0) мс" } ?? "—")
-                .font(.system(size: 22, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private func infoRow(_ caption: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(caption).foregroundStyle(.secondary)
-            Spacer()
-            Text(value).font(.caption.monospaced()).multilineTextAlignment(.trailing)
-        }.font(.subheadline)
-    }
-
-    private func actionButton(_ title: String, symbol: String, action: String, enabled: Bool) -> some View {
-        Button {
-            pendingAction = action
-            confirmAction = true
-        } label: {
-            Label(title, systemImage: symbol)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(.bordered)
-        .disabled(!enabled || model.loading)
-    }
-}
-
-struct AdminSettingsScreen: View {
-    @EnvironmentObject var model: AdminModel
-    @State private var showToken = false
-
-    var body: some View {
-        Form {
-            Section {
-                Label("Nightwell Admin", systemImage: "shield.lefthalf.filled")
-                    .font(.headline)
-                Text("Отдельная панель управления двумя сервисами на твоём Windows-сервере.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
-            Section("Подключение к Windows") {
-                TextField("https://admin.nightwell.fun", text: $model.endpoint)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
-                HStack {
-                    if showToken {
-                        TextField("Административный ключ", text: $model.token)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    } else {
-                        SecureField("Административный ключ", text: $model.token)
-                            .textInputAutocapitalization(.never)
-                    }
-                    Button {
-                        showToken.toggle()
-                    } label: { Image(systemName: showToken ? "eye.slash" : "eye") }
-                }
-                Button {
-                    Task { await model.refreshAdmin() }
-                } label: { Label("Проверить подключение", systemImage: "network") }
-                if let admin = model.admin {
-                    Label("Админ-сервер подключён, версия \(admin.version)", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                } else if !model.adminError.isEmpty {
-                    Text(model.adminError).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Section("Безопасность") {
-                Text("Ключ сохраняется в защищённом хранилище iPhone. Управление доступно только через HTTPS и только после установки Nightwell Admin Bridge на Windows.")
-                    .font(.footnote)
-                Text("Не отправляй ключ в переписку и не публикуй его в GitHub.")
-                    .font(.footnote)
-            }
-            Section("Приложение") {
-                LabeledContent("Версия", value: "1.1.0")
-                LabeledContent("Сервисы", value: "Music · Chat")
-            }
-        }
-        .scrollDismissesKeyboard(.interactively)
-        .navigationTitle("Настройки")
-    }
-}

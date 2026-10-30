@@ -1,0 +1,48 @@
+name: Nightwell Chat iPhone IPA
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-iphone:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: cd ios && xcodegen generate
+      - name: Build for physical iPhone (no signing)
+        run: |
+          xcodebuild \
+            -project ios/NightwellChat.xcodeproj \
+            -scheme NightwellChat \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+      - name: Package unsigned IPA for later signing
+        run: |
+          set -euo pipefail
+          test -f build/Build/Products/Release-iphoneos/NightwellChat.app/Info.plist
+          mkdir -p dist/Payload
+          ditto build/Build/Products/Release-iphoneos/NightwellChat.app dist/Payload/NightwellChat.app
+          cd dist
+          /usr/bin/zip -q -r NightwellChat-unsigned.ipa Payload
+          /usr/bin/unzip -t NightwellChat-unsigned.ipa
+      - name: Upload iPhone IPA (unsigned; requires signing before install)
+        uses: actions/upload-artifact@v4
+        with:
+          name: NightwellChat-iPhone-unsigned-IPA
+          path: dist/NightwellChat-unsigned.ipa
+          if-no-files-found: error

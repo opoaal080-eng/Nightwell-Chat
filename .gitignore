@@ -11,3 +11,9 @@ data/
 *.db
 *.db-shm
 *.db-wal
+
+# Device/server push configuration
+android/app/google-services.json
+**/*firebase*admin*.json
+**/*service-account*.json
+**/*vapid*private*.pem

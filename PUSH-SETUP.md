@@ -8,8 +8,10 @@ and there are separate notification channels for messages and calls.
 **The Firebase project is not included and cannot be created automatically from GitHub.**
 1. At https://console.firebase.google.com create a free Firebase project.
 2. Add Android app with package name fun.nightwell.chat.
-3. Download google-services.json and place it in android/app/google-services.json
-   on the machine that builds the APK.
+3. Download google-services.json. For GitHub Actions builds, open repository
+   Settings -> Secrets and variables -> Actions and create a repository secret
+   NIGHTWELL_FIREBASE_ANDROID_JSON with the complete JSON file content.
+   On a trusted local build machine, place it in android/app/google-services.json.
 4. Build again. Without that file the APK still builds, but background FCM
    notifications cannot work.
 5. In Firebase project settings -> Service accounts generate the private service

@@ -19,6 +19,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+      - name: Configure FCM for this build (optional)
+        env:
+          NIGHTWELL_FIREBASE_ANDROID_JSON: ${{ secrets.NIGHTWELL_FIREBASE_ANDROID_JSON }}
+        run: |
+          if [ -n "$NIGHTWELL_FIREBASE_ANDROID_JSON" ]; then
+            printf '%s' "$NIGHTWELL_FIREBASE_ANDROID_JSON" > android/app/google-services.json
+            echo "Firebase Android configuration provided."
+          else
+            echo "::warning::Firebase credentials not provided. APK builds, but background FCM notifications will remain inactive."
+          fi
       - name: Build installable test APK
         run: |
           mkdir -p android/app/src/main/res/drawable-nodpi

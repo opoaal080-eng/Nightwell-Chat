@@ -24,7 +24,7 @@ Independent **black-and-white** messenger by Nightwell. Native iPhone UI (SwiftU
 
 ### Fixing `Failed building wheel for pyyaml` on Windows
 
-Older versions of the launcher used `py -3`, which picked the newest installed Python. On machines with Python 3.15 this could cause a failed PyYAML build asking for Microsoft Visual C++ 14.0. The launcher now verifies that the interpreter really executes Python code before selecting it, rather than trusting a possibly misleading launcher exit code. It prefers 3.12, then 3.13/3.11/3.10. If no matching runtime is installed, use `py install 3.12` (or `winget install -e --id Python.Python.3.12`) and rerun the BAT. It replaces only an incompatible `.venv` and installs a smaller Uvicorn dependency set without PyYAML. The app still supports WebSockets.
+Older versions of the launcher used `py -3`, which picked the newest installed Python. On machines with Python 3.15 this could cause a failed PyYAML build asking for Microsoft Visual C++ 14.0. The launcher now verifies that the interpreter actually executes Python code before selecting it (rather than relying on a misleading exit code). It prefers 3.12, then 3.13/3.11/3.10. If none of these versions is installed, run `py install 3.12` (or `winget install -e --id Python.Python.3.12`) and restart the BAT. It replaces only an incompatible `.venv` and installs a smaller Uvicorn dependency set without PyYAML. The app still supports WebSockets.
 
 If you have **only Python 3.15**, install Python 3.12 first. One Windows option is `winget install -e --id Python.Python.3.12` or use the [official download](https://www.python.org/downloads/). Then close the old terminal, extract the new project ZIP over the old files (without deleting `.env` or `data`), and run `Start_Nightwell_Chat.bat`. If you cannot replace the whole folder, copy `Start_Nightwell_Chat.bat` and `server/requirements.txt` from the new archive. You do **not** need Visual Studio Build Tools for this fix.
 
@@ -64,3 +64,25 @@ SECRET_KEY=some-random-string-longer-than-32-characters python -m pytest -q
 ## Production security and scaling checklist
 
 Add IP/user rate limiting on login and registration, abuse reporting and moderation, email or passkey recovery, stronger session revocation, object storage for attachments, PostgreSQL and Redis fan-out before broad public launch. Terminate TLS at a proxy, restrict trusted forwarded headers and implement HTTPS monitoring. SQLite and one worker are intentionally chosen for the initial small private trial.
+
+## Phone sign-in and contacts (no SMS)
+
+- `POST /auth/phone/register` registers a new account with a phone number and password. `POST /auth/phone/login` signs in. Phone numbers are normalized to E.164 format; Russian 8XXXXXXXXXX, 7XXXXXXXXXX and ten-digit mobile 9XXXXXXXXX also work. Phone numbers are unique. Passwords are salted and hashed with scrypt, with persisted rate limits for phone login.
+- **Important:** Without SMS/call or another out-of-band check, only the **format** of a phone number can be validated. The app cannot determine whether the person owns the number. There is no password recovery by phone. Do not treat this as phone-number verification.
+- Existing username/password accounts retain their identity, chats and history. Sign in with the legacy option, then link a phone number from Settings using the account's current password. Do not register a new account if you need old chats.
+- Contacts are read on the device only after granting access. The device sends only a selected phone number to `/users/by-phone`, not the whole contact list. The match requires an exact number, the other person's opt-in and an authenticated session.
+- Phone search is **off by default**, must be explicitly enabled by each user and is rate limited. Because phone ownership is unverified, a match is a user-entered claim, not a verified identity.
+- No SMS provider, SMS secret or SMS charge is required. For public deployment add abuse protection, account recovery and real phone ownership verification before making claims about verified contacts.
+
+## Android 0.3
+
+- Native Android client (Java, minimum Android 8.0) in `android/`, dark monochrome UI.
+- Phone + password registration/login, username/password migration login, encrypted session token using Android Keystore.
+- Chat list, private and group messages, realtime WebSocket refresh, send/edit/delete/reactions, user search and selected-number contact lookup.
+- Requests `READ_CONTACTS` only when opening the Contacts screen; address book is read locally, no batch upload. Only a tapped number is queried against `/users/by-phone`, which respects the other person's opt-in privacy setting.
+- Profile, phone linking, opt-in discovery, HTTPS server setting and logout.
+- GitHub Actions `.github/workflows/android.yml` compiles a **debug-signed APK** (Android permits installing this build for testing; not suitable for Play Store release). Build: `cd android && gradle :app:assembleDebug` using Gradle 8.10.2, Android SDK 35 and JDK 17.
+
+**No SMS:** phone numbers have a syntax check only. Any user can claim an unverified number. Phone discovery is off by default; do not rely on it as proof of identity. The app does not support push notifications, media uploads, voice/video calls, E2EE or recovery of a lost password. For public launch, implement number-ownership verification, abuse prevention, credential recovery and a security assessment.
+
+For existing servers, replace only the server code/files and restart `Start_Nightwell_Chat.bat`; the `setup()` migration adds columns and tables without deleting chats. **Back up** `.env` and `data/nightwell_chat.db` first. The same API powers iOS and Android. Nightwell Music/Caddy are separate and should remain unchanged.

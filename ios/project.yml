@@ -16,8 +16,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fun.nightwell.chat
-        MARKETING_VERSION: 0.1.0
-        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.3.0
+        CURRENT_PROJECT_VERSION: 3
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
@@ -25,5 +25,6 @@ targets:
       properties:
         CFBundleDisplayName: Nightwell Chat
         UILaunchScreen: {}
+        NSContactsUsageDescription: "Nightwell Chat использует выбранные контакты, чтобы находить людей по номеру. Адресная книга не загружается на сервер."
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false

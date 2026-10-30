@@ -1,0 +1,25 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'fun.nightwell.chat'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'fun.nightwell.chat'
+        minSdk 26
+        targetSdk 34
+        versionCode 3
+        versionName '0.3.0'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildTypes {
+        release { minifyEnabled false }
+        debug { applicationIdSuffix '.debug' }
+    }
+}
+
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}

@@ -6,3 +6,8 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 ios/*.xcodeproj/
+.venv/
+data/
+*.db
+*.db-shm
+*.db-wal

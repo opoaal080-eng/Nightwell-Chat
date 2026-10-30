@@ -577,7 +577,7 @@ struct AdminConnectionScreen: View {
             }.padding(16)
         }
         .scrollDismissesKeyboard(.interactively)
-        .background(.black.ignoresSafeArea())
+        .background(Color.black.ignoresSafeArea())
         .navigationTitle("Подключение")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -657,7 +657,7 @@ struct AdminDiagnosticsScreen: View {
             }.padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
-        .background(.black.ignoresSafeArea())
+        .background(Color.black.ignoresSafeArea())
         .navigationTitle("Диагностика")
         .navigationBarTitleDisplayMode(.inline)
     }

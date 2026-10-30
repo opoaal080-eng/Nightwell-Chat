@@ -4,6 +4,7 @@ import UIKit
 import PhotosUI
 import SafariServices
 import ContactsUI
+import Contacts
 
 struct PhoneContactPicker: UIViewControllerRepresentable {
     var select: (String) -> Void
@@ -175,4 +176,127 @@ struct IncomingCallsView:View {
         }
     }
     func reload() async {calls=await store.pendingCalls()}
+}
+
+
+struct PhoneEntry: Identifiable {
+    let id:String
+    let name:String
+    let phone:String
+}
+
+// User-triggered local address book access. No contact list is uploaded to the API.
+final class PhoneContactsStore: ObservableObject {
+    @Published var entries:[PhoneEntry]=[]
+    @Published var errorMessage:String?
+    @Published var loading=false
+    private let store=CNContactStore()
+
+    func requestContacts() {
+        switch CNContactStore.authorizationStatus(for:.contacts) {
+        case .notDetermined:
+            store.requestAccess(for:.contacts) { [weak self] granted, _ in
+                DispatchQueue.main.async {
+                    if granted { self?.fetchContacts() }
+                    else { self?.errorMessage="Доступ к контактам не предоставлен. Разреши его в настройках iPhone." }
+                }
+            }
+        case .denied, .restricted:
+            errorMessage="Доступ к контактам ограничен. Разреши его в настройках iPhone."
+        default:
+            fetchContacts()
+        }
+    }
+
+    private func fetchContacts() {
+        loading=true
+        errorMessage=nil
+        DispatchQueue.global(qos:.userInitiated).async { [weak self] in
+            guard let self else {return}
+            var output:[PhoneEntry]=[]
+            var failure:String?
+            let fields:[CNKeyDescriptor]=[
+                CNContactGivenNameKey as CNKeyDescriptor,
+                CNContactFamilyNameKey as CNKeyDescriptor,
+                CNContactPhoneNumbersKey as CNKeyDescriptor
+            ]
+            do {
+                let request=CNContactFetchRequest(keysToFetch:fields)
+                try self.store.enumerateContacts(with:request) { contact, _ in
+                    let name=[contact.givenName,contact.familyName]
+                        .filter{ !$0.isEmpty }.joined(separator:" ")
+                    for (idx,phone) in contact.phoneNumbers.enumerated() {
+                        let number=phone.value.stringValue
+                        if !number.isEmpty {
+                            output.append(PhoneEntry(id:"\(contact.identifier)-\(idx)",
+                                name:name.isEmpty ? number : name,phone:number))
+                        }
+                    }
+                }
+                output.sort{ $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            } catch {
+                failure="Не удалось прочитать контакты: \(error.localizedDescription)"
+            }
+            DispatchQueue.main.async {
+                self.entries=output
+                self.errorMessage=failure
+                self.loading=false
+            }
+        }
+    }
+}
+
+struct PhoneContactsView:View {
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var contacts=PhoneContactsStore()
+    @State private var query=""
+    let onPick:(String)->Void
+
+    private var filtered:[PhoneEntry] {
+        guard !query.isEmpty else { return contacts.entries }
+        return contacts.entries.filter {
+            $0.name.localizedCaseInsensitiveContains(query) || $0.phone.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body:some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Выбери контакт для поиска в Nightwell. Адресная книга остаётся на iPhone.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if contacts.loading { ProgressView("Читаем контакты…") }
+                    if let error=contacts.errorMessage {
+                        Text(error).font(.caption)
+                        Button("Открыть настройки iPhone") {
+                            if let url=URL(string:UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    }
+                }
+                Section("Контакты (\(filtered.count))") {
+                    ForEach(filtered) { entry in
+                        Button {
+                            onPick(entry.phone)
+                            dismiss()
+                        } label: {
+                            VStack(alignment:.leading,spacing:4) {
+                                Text(entry.name).foregroundStyle(.primary)
+                                Text(entry.phone).font(.caption).foregroundStyle(.secondary)
+                            }.padding(.vertical,3)
+                        }
+                    }
+                }
+            }
+            .searchable(text:$query,prompt:"Имя или номер")
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle("Контакты iPhone")
+            .toolbar {
+                ToolbarItem(placement:.topBarTrailing) {
+                    Button("Готово"){dismiss()}
+                }
+            }
+        }.onAppear {contacts.requestContacts()}
+    }
 }

@@ -58,11 +58,13 @@ struct LoginView:View {
                 }.font(.footnote).foregroundStyle(.gray)
             }.padding(24)
         }.background(Color.black)
+        .scrollDismissesKeyboard(.interactively)
     }
 }
 
 struct PhoneLoginFields:View {
     @EnvironmentObject var store:ChatStore
+    @FocusState private var keyboardVisible:Bool
     @State private var registering=false
     @State private var number=""
     @State private var password=""
@@ -75,11 +77,19 @@ struct PhoneLoginFields:View {
             TextField("+79991234567",text:$number)
                 .keyboardType(.phonePad).textContentType(.telephoneNumber)
                 .textFieldStyle(.roundedBorder)
+                .focused($keyboardVisible)
             if registering {
                 TextField("Твоё имя",text:$displayName).textFieldStyle(.roundedBorder)
+                    .focused($keyboardVisible)
                 Toggle("Разрешить поиск по номеру",isOn:$discoverable)
             }
             SecureField("Пароль от 8 символов",text:$password).textFieldStyle(.roundedBorder)
+                .focused($keyboardVisible)
+            if keyboardVisible {
+                Button { keyboardVisible=false } label: {
+                    Label("Скрыть клавиатуру",systemImage:"keyboard.chevron.compact.down")
+                }.font(.subheadline).frame(maxWidth:.infinity,alignment:.trailing)
+            }
             Button(registering ? "Создать аккаунт" : "Войти"){
                 Task{await store.loginByPhone(number,password:password,
                     name:registering ? displayName : nil,discoverable:discoverable)}
@@ -92,12 +102,15 @@ struct PhoneLoginFields:View {
             }.font(.footnote)
             Text("SMS не используется. Проверяется формат номера, а не принадлежность SIM-карты.")
                 .font(.caption).foregroundStyle(.gray).multilineTextAlignment(.center)
+            Text("Nightwell Chat 0.7 • вход по телефону")
+                .font(.caption2).foregroundStyle(.gray)
         }.padding(18).glass()
     }
 }
 
 struct LegacyLoginView: View {
     @EnvironmentObject var store: ChatStore
+    @FocusState private var keyboardVisible:Bool
     @State private var register = false
     @State private var username = ""
     @State private var password = ""
@@ -112,10 +125,14 @@ struct LegacyLoginView: View {
                         .font(.system(size:27,weight:.semibold))
                     TextField("Имя пользователя",text:$username).textInputAutocapitalization(.never)
                         .autocorrectionDisabled().textContentType(.username)
-                        .textFieldStyle(.roundedBorder)
-                    if register { TextField("Отображаемое имя",text:$displayName).textFieldStyle(.roundedBorder) }
+                        .textFieldStyle(.roundedBorder).focused($keyboardVisible)
+                    if register { TextField("Отображаемое имя",text:$displayName).textFieldStyle(.roundedBorder).focused($keyboardVisible) }
                     SecureField("Пароль от 8 символов",text:$password)
-                        .textContentType(register ? .newPassword : .password).textFieldStyle(.roundedBorder)
+                        .textContentType(register ? .newPassword : .password).textFieldStyle(.roundedBorder).focused($keyboardVisible)
+                    if keyboardVisible {
+                        Button("Скрыть клавиатуру") { keyboardVisible=false }
+                            .frame(maxWidth:.infinity,alignment:.trailing).font(.caption)
+                    }
                     Button {
                         Task { await store.login(username:username,password:password,displayName:register ? displayName : nil) }
                     } label: {
@@ -150,8 +167,7 @@ struct InboxView: View {
                     List(store.chats) { chat in
                         Button { selected=chat } label: {
                             HStack(spacing:13) {
-                                Circle().fill(.white.opacity(0.12)).frame(width:53,height:53)
-                                    .overlay(Text(String(chat.title.prefix(1)).uppercased()).font(.title2).foregroundStyle(.white))
+                                AvatarCircle(person:chat.other_user,fallback:chat.title)
                                 VStack(alignment:.leading,spacing:5) {
                                     HStack {
                                         Text(chat.title).font(.headline).foregroundStyle(.white)
@@ -168,6 +184,21 @@ struct InboxView: View {
                 }
             }
             .navigationTitle("Чаты")
+            .safeAreaInset(edge:.bottom) {
+                HStack(spacing:20) {
+                    Button { findPeople=true } label: {
+                        Label("Контакты",systemImage:"person.2")
+                    }
+                    Spacer()
+                    Button { settings=true } label: {
+                        Label("Профиль",systemImage:"person.crop.circle")
+                    }
+                }
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal,24).padding(.vertical,12)
+                .frame(maxWidth:.infinity)
+                .background(.ultraThinMaterial)
+            }
             .toolbar {
                 ToolbarItem(placement:.topBarLeading) { Button { settings=true } label:{ Image(systemName:"slider.horizontal.3") } }
                 ToolbarItemGroup(placement:.topBarTrailing) {
@@ -197,16 +228,19 @@ struct PeopleView: View {
     @State private var matched:Person?
     @State private var picked=false
     @State private var contacts=false
+    @FocusState private var searchFocused:Bool
     let onOpen: (Conversation) -> Void
     var body: some View {
         NavigationStack {
             List {
                 Section("Поиск по телефону") {
                     HStack {
-                        TextField("+79991234567",text:$number).keyboardType(.phonePad)
+                        TextField("+79991234567",text:$number).keyboardType(.phonePad).focused($searchFocused)
                         Button("Найти"){Task {matched=await store.searchPhone(number);picked=true}}
                     }
-                    Button("Выбрать из контактов"){contacts=true}
+                    Button { searchFocused=false; contacts=true } label: {
+                        Label("Открыть контакты iPhone",systemImage:"person.crop.rectangle.stack")
+                    }
                     if let matched {
                         Button(matched.display_name){Task{if let chat=await store.openDirect(matched){onOpen(chat)}}}
                     } else if picked {
@@ -227,10 +261,17 @@ struct PeopleView: View {
                     }
                 }
             }.scrollContentBackground(.hidden).background(ink)
+                .scrollDismissesKeyboard(.interactively)
                 .navigationTitle("Новый чат").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.topBarLeading) { Button("Закрыть") { dismiss() } } }
         }
-        .sheet(isPresented:$contacts){PhoneContactPicker {selected in number=selected;contacts=false}}
+        .sheet(isPresented:$contacts) {
+            PhoneContactsView { selected in
+                number=selected
+                contacts=false
+                Task { matched=await store.searchPhone(selected);picked=true }
+            }
+        }
     }
 }
 
@@ -279,6 +320,8 @@ struct ChatView: View {
     @State private var editText = ""
     @State private var older = true
     @State private var pickedPhoto:PhotosPickerItem?
+    @State private var uploading=false
+    @FocusState private var composerFocused:Bool
     @State private var showingFilePicker=false
     @State private var preview:URL?
     @State private var showingCall=false
@@ -343,6 +386,8 @@ struct ChatView: View {
                     }.padding(.horizontal,14).padding(.vertical,12)
                 }
                 .defaultScrollAnchor(.bottom)
+                .scrollDismissesKeyboard(.interactively)
+                .onTapGesture { composerFocused=false }
                 .onChange(of:messages.last?.id) { _,_ in
                     if let id=messages.last?.id { withAnimation(.easeOut(duration:0.2)) { proxy.scrollTo(id,anchor:.bottom) } }
                 }
@@ -355,12 +400,30 @@ struct ChatView: View {
                     Button { self.reply=nil } label:{ Image(systemName:"xmark") }
                 }.padding(.horizontal,16).padding(.top,8)
             }
+            if uploading {
+                HStack(spacing:8) { ProgressView().tint(.white); Text("Загрузка медиа…").font(.caption) }
+                    .padding(.horizontal,16).padding(.top,6)
+            }
             HStack(alignment:.bottom,spacing:10) {
                 PhotosPicker(selection:$pickedPhoto,matching:.images) {
-                    Image(systemName:"photo").font(.title2)
+                    VStack(spacing:2) {
+                        Image(systemName:"photo").font(.title2)
+                        Text("Фото").font(.system(size:10))
+                    }
+                }.disabled(uploading)
+                Button { showingFilePicker=true } label: {
+                    VStack(spacing:2) {
+                        Image(systemName:"paperclip").font(.title2)
+                        Text("Файл").font(.system(size:10))
+                    }
+                }.disabled(uploading)
+                if composerFocused {
+                    Button { composerFocused=false } label: {
+                        Image(systemName:"keyboard.chevron.compact.down").font(.title3)
+                    }.accessibilityLabel("Скрыть клавиатуру")
                 }
-                Button {showingFilePicker=true} label:{Image(systemName:"paperclip").font(.title2)}
                 TextField("Сообщение",text:$draft,axis:.vertical)
+                    .focused($composerFocused)
                     .lineLimit(1...5).padding(12)
                     .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:18))
                 Button { Task { await submit() } } label: {
@@ -396,15 +459,21 @@ struct ChatView: View {
                 guard let data=try? Data(contentsOf:file),data.count<=15*1024*1024 else {
                     store.alertText="Размер файла не должен превышать 15 МБ";return
                 }
+                uploading=true
                 await store.sendFile(chatID:chat.id,bytes:data,filename:file.lastPathComponent,mime:"application/octet-stream")
+                await reload()
+                uploading=false
             }
         }
         .onChange(of:pickedPhoto){_,item in
             Task{
                 guard let data=try? await item?.loadTransferable(type:Data.self),
                     let image=UIImage(data:data),let jpg=image.jpegData(compressionQuality:0.86) else{return}
+                uploading=true
                 await store.sendFile(chatID:chat.id,bytes:jpg,filename:"photo.jpg",mime:"image/jpeg")
                 pickedPhoto=nil
+                await reload()
+                uploading=false
             }
         }
         .quickLookPreview($preview)
@@ -448,12 +517,29 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Профиль") {
-                    NavigationLink("Аватар, имя и телефон"){EditProfileView()}
+                    NavigationLink {
+                        EditProfileView()
+                    } label: {
+                        HStack(spacing:12) {
+                            AvatarCircle(person:store.me,fallback:store.me?.display_name ?? "N")
+                            VStack(alignment:.leading,spacing:3) {
+                                Text("Аватар и имя")
+                                Text("Нажми, чтобы загрузить фото").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                     Text("@\(store.me?.username ?? "")").foregroundStyle(muted)
                     TextField("Отображаемое имя",text:$displayName)
                     Button("Сохранить имя") { Task { await store.saveProfile(displayName) } }
                 }
-                Section("Телефон") { NavigationLink("Привязка и приватность"){PhoneLinkView()} }
+                Section("Телефон") {
+                    NavigationLink("Привязка номера и поиск"){PhoneLinkView()}
+                    Text("Вход и регистрация по номеру доступны после выхода из аккаунта. Сначала привяжи номер к текущему профилю, чтобы сохранить чаты.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Версия") {
+                    Text("Nightwell Chat 0.7")
+                }
                 Section("Сервер") {
                     TextField("https://chat.nightwell.fun",text:$server)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
@@ -463,6 +549,7 @@ struct SettingsView: View {
                 }
                 Section { Button("Выйти из аккаунта",role:.destructive) { store.logout(); dismiss() } }
             }.scrollContentBackground(.hidden).background(ink)
+                .scrollDismissesKeyboard(.interactively)
                 .navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.topBarTrailing) { Button("Готово") { dismiss() } } }
         }.onAppear { server=store.serverURL; displayName=store.me?.display_name ?? "" }

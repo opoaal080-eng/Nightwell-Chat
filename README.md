@@ -24,7 +24,7 @@ Independent **black-and-white** messenger by Nightwell. Native iPhone UI (SwiftU
 
 ### Fixing `Failed building wheel for pyyaml` on Windows
 
-Older versions of the launcher used `py -3`, which picked the newest installed Python. On machines with Python 3.15 this could cause a failed PyYAML build asking for Microsoft Visual C++ 14.0. The updated launcher avoids this by selecting Python 3.12 if installed, otherwise 3.13/3.11/3.10. It replaces only an incompatible `.venv` and installs a smaller Uvicorn dependency set without PyYAML. The app still supports WebSockets.
+Older versions of the launcher used `py -3`, which picked the newest installed Python. On machines with Python 3.15 this could cause a failed PyYAML build asking for Microsoft Visual C++ 14.0. The launcher now verifies that the interpreter really executes Python code before selecting it, rather than trusting a possibly misleading launcher exit code. It prefers 3.12, then 3.13/3.11/3.10. If no matching runtime is installed, use `py install 3.12` (or `winget install -e --id Python.Python.3.12`) and rerun the BAT. It replaces only an incompatible `.venv` and installs a smaller Uvicorn dependency set without PyYAML. The app still supports WebSockets.
 
 If you have **only Python 3.15**, install Python 3.12 first. One Windows option is `winget install -e --id Python.Python.3.12` or use the [official download](https://www.python.org/downloads/). Then close the old terminal, extract the new project ZIP over the old files (without deleting `.env` or `data`), and run `Start_Nightwell_Chat.bat`. If you cannot replace the whole folder, copy `Start_Nightwell_Chat.bat` and `server/requirements.txt` from the new archive. You do **not** need Visual Studio Build Tools for this fix.
 

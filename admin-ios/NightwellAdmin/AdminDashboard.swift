@@ -210,7 +210,13 @@ struct AdminServiceScreen: View {
         .navigationTitle(service == .music ? "Музыка" : "Чат")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationLink {
+                    AdminEventsScreen()
+                } label: {
+                    Image(systemName: "bell.badge")
+                        .foregroundStyle(.white.opacity(0.84))
+                }
                 Button {
                     Task { await model.probe(service); await model.refreshAdmin() }
                 } label: {
@@ -407,6 +413,7 @@ struct AdminServiceScreen: View {
 
 struct AdminSettingsScreen: View {
     @EnvironmentObject private var model: AdminModel
+    @EnvironmentObject private var push: AdminPushManager
 
     @AppStorage("nightwell.admin.autorefresh") private var autoRefresh = true
     @AppStorage("nightwell.admin.refreshminutes") private var refreshMinutes = 1
@@ -470,11 +477,38 @@ struct AdminSettingsScreen: View {
                 }
                 group("УВЕДОМЛЕНИЯ") {
                     Toggle("Предупреждения о сбоях", isOn: $alerts)
-                    Text("Показывает предупреждение внутри приложения, если доступный сервер перестал отвечать.")
+                    NavigationLink {
+                        AdminEventsScreen()
+                    } label: {
+                        Label("Журнал событий", systemImage: "list.bullet.rectangle")
+                            .font(.system(size: 13))
+                    }
+                    Button {
+                        Task { await push.enable(endpoint: model.endpoint, authToken: model.token) }
+                    } label: {
+                        Label("Включить push-уведомления", systemImage: "bell.badge")
+                            .font(.system(size: 13))
+                    }
+                    Button {
+                        Task { await push.sync(endpoint: model.endpoint, authToken: model.token) }
+                    } label: {
+                        Label("Проверить подключение APNs", systemImage: "network")
+                            .font(.system(size: 13))
+                    }
+                    Button {
+                        Task { await push.sendTest(endpoint: model.endpoint, authToken: model.token) }
+                    } label: {
+                        Label("Отправить тестовое уведомление", systemImage: "paperplane")
+                            .font(.system(size: 13))
+                    }
+                    Text(push.statusText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(AdminStyle.soft)
+                    Text("Уведомления при закрытом приложении требуют Apple Push Notifications, подписанной сборки и обновлённого Windows-моста.")
                         .font(.system(size: 11)).foregroundStyle(AdminStyle.soft)
                 }
                 group("О ПРИЛОЖЕНИИ") {
-                    AdminInfoRow(title: "Версия", value: "1.2.0 (4)")
+                    AdminInfoRow(title: "Версия", value: "1.3.0 (5)")
                     AdminInfoRow(title: "Сервисы", value: "Music · Chat")
                     AdminInfoRow(title: "Управление", value: "Nightwell Admin")
                 }

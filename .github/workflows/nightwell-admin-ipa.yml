@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           test -f admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist
           test "$(plutil -extract UILaunchStoryboardName raw admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist)" = "LaunchScreen"
-          test "$(plutil -extract CFBundleVersion raw admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist)" = "4"
+          test "$(plutil -extract CFBundleVersion raw admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist)" = "5"
           test "$(plutil -extract CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconName raw admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist)" = "AppIcon"
           test -f admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Assets.car
           find admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app -name "LaunchScreen.storyboardc" | grep -q .

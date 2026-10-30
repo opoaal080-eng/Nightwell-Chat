@@ -119,6 +119,7 @@ enum TokenVault {
 @MainActor final class AdminModel: ObservableObject {
     @Published var probes: [AdminService: ProbeStatus] = [:]
     @Published var history: [AdminService: [ProbeSample]] = [:]
+    @Published var events: [AdminEvent] = []
     @Published var admin: AdminStatus?
     @Published var adminError = ""
     @Published var notice = ""
@@ -176,7 +177,12 @@ enum TokenVault {
                 samples.append(ProbeSample(time: Date(), ms: total))
                 history[service] = Array(samples.suffix(80))
             } else if wasOnline && (UserDefaults.standard.object(forKey: "nightwell.admin.alerts") as? Bool ?? true) {
-                notice = "\(service.name): сервер начал возвращать HTTP \(http.statusCode)."
+                let text = "Сервер возвращает HTTP \(http.statusCode)."
+                if AdminPushManager.shared.authorized {
+                    AdminPushManager.shared.localWarning(title: service.name, message: text)
+                } else {
+                    notice = "\(service.name): " + text
+                }
             }
         } catch {
             let wasOnline = probes[service]?.available == true
@@ -190,7 +196,12 @@ enum TokenVault {
                 checkedAt: Date()
             )
             if wasOnline && (UserDefaults.standard.object(forKey: "nightwell.admin.alerts") as? Bool ?? true) {
-                notice = "\(service.name): соединение потеряно. \(error.localizedDescription)"
+                let text = "Соединение потеряно. \(error.localizedDescription)"
+                if AdminPushManager.shared.authorized {
+                    AdminPushManager.shared.localWarning(title: service.name, message: text)
+                } else {
+                    notice = "\(service.name): " + text
+                }
             }
         }
     }
@@ -200,6 +211,19 @@ enum TokenVault {
         async let chat: Void = probe(.chat)
         _ = await (music, chat)
         await refreshAdmin()
+        if admin != nil { await refreshEvents() }
+    }
+
+    func refreshEvents() async {
+        guard !token.isEmpty else { events = []; return }
+        do {
+            let req = try authorizedRequest("v1/events")
+            let (data, response) = try await URLSession.shared.data(for: req)
+            try checkResponse(response, data)
+            events = try JSONDecoder().decode(AdminEventsEnvelope.self, from: data).events
+        } catch {
+            // A bridge from an older version may not support the event endpoint.
+        }
     }
 
     func refreshAdmin() async {
@@ -220,7 +244,7 @@ enum TokenVault {
         }
     }
 
-    private func authorizedRequest(_ path: String, method: String = "GET") throws -> URLRequest {
+    func authorizedRequest(_ path: String, method: String = "GET") throws -> URLRequest {
         let address = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let base = URL(string: address),
               base.scheme == "https", base.host != nil, base.user == nil,
@@ -278,7 +302,9 @@ enum TokenVault {
 }
 
 @main struct NightwellAdminApp: App {
+    @UIApplicationDelegateAdaptor(AdminNotificationDelegate.self) private var notificationDelegate
     @StateObject private var model = AdminModel()
+    @StateObject private var push = AdminPushManager.shared
     @AppStorage("nightwell.admin.autorefresh") private var autoRefresh = true
     var body: some Scene {
         WindowGroup {
@@ -296,10 +322,12 @@ enum TokenVault {
                 .toolbarBackground(Color.black.opacity(0.93), for: .tabBar)
             }
             .environmentObject(model)
+            .environmentObject(push)
             .tint(.white)
             .preferredColorScheme(.dark)
             .task {
                 await model.refreshAll()
+                await push.resume(endpoint: model.endpoint, authToken: model.token)
                 while !Task.isCancelled {
                     let interval = max(1, UserDefaults.standard.integer(forKey: "nightwell.admin.refreshminutes"))
                     try? await Task.sleep(for: .seconds(Double(interval * 60)))

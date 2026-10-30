@@ -19,10 +19,10 @@ def test_web_client_and_push_registration():
         with db() as con:
             row=con.execute("SELECT user_id,kind FROM push_devices").fetchone()
             assert row["user_id"] == b["user"]["id"] and row["kind"]=="fcm"
-        assert c.delete("/push/fcm/unregister",headers=headers(a),json=good).status_code==200
+        assert c.request("DELETE","/push/fcm/unregister",headers=headers(a),json=good).status_code==200
         with db() as con:
             assert con.execute("SELECT COUNT(*) FROM push_devices").fetchone()[0]==1
-        assert c.delete("/push/fcm/unregister",headers=headers(b),json=good).status_code==200
+        assert c.request("DELETE","/push/fcm/unregister",headers=headers(b),json=good).status_code==200
         with db() as con:
             assert con.execute("SELECT COUNT(*) FROM push_devices").fetchone()[0]==0
 

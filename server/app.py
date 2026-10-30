@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 DB_PATH = Path(os.getenv("DB_PATH", "./nightwell_chat.db"))
 SECRET = os.getenv("SECRET_KEY", "")
-if len(SECRET) < 32:
+if len(SECRET) < 32 or SECRET.startswith("REPLACE_WITH_"):
     raise RuntimeError("Set SECRET_KEY to a random string of at least 32 characters")
 
 @contextmanager
@@ -150,6 +150,7 @@ def register(data: Registration):
     username=data.username.casefold().strip()
     if not re.fullmatch(r"[a-z0-9_]{3,24}",username):
         raise HTTPException(422,"Username: 3-24 Latin letters, digits or underscores")
+    if not data.display_name.strip(): raise HTTPException(422,"Display name cannot be blank")
     with db() as c:
         try:
             cur=c.execute("INSERT INTO users(username,display_name,password_hash) VALUES(?,?,?)",
@@ -172,6 +173,7 @@ def me(user=Depends(current)): return user
 
 @app.patch("/me")
 def update_me(body: Profile,user=Depends(current)):
+    if not body.display_name.strip(): raise HTTPException(422,"Display name cannot be blank")
     with db() as c:
         c.execute("UPDATE users SET display_name=? WHERE id=?",(body.display_name.strip(),user["id"]))
     return {**user,"display_name":body.display_name.strip()}
@@ -217,6 +219,7 @@ async def direct(other_id:int,user=Depends(current)):
 
 @app.post("/chats/groups",status_code=201)
 async def group(payload:ChatCreate,user=Depends(current)):
+    if not payload.title.strip(): raise HTTPException(422,"Group title cannot be blank")
     uid=user["id"]
     people=set(payload.user_ids)|{uid}
     with db() as c:
@@ -253,6 +256,7 @@ def get_messages(chat_id:int,before:int|None=None,limit:int=Query(50,ge=1,le=100
 
 @app.post("/chats/{chat_id}/messages",status_code=201)
 async def send_message(chat_id:int,payload:MessageCreate,user=Depends(current)):
+    if not payload.body.strip(): raise HTTPException(422,"Message cannot be blank")
     with db() as c:
         member(c,chat_id,user["id"])
         if payload.reply_to and not c.execute("SELECT id FROM messages WHERE id=? AND chat_id=?",(payload.reply_to,chat_id)).fetchone():
@@ -272,6 +276,7 @@ def own_message(c,mid,uid):
 
 @app.patch("/messages/{message_id}")
 async def edit_message(message_id:int,payload:MessageCreate,user=Depends(current)):
+    if not payload.body.strip(): raise HTTPException(422,"Message cannot be blank")
     with db() as c:
         row=own_message(c,message_id,user["id"])
         if row["deleted"]: raise HTTPException(400,"Deleted message")
@@ -309,8 +314,10 @@ async def mark_read(chat_id:int,body:ReadUpdate,user=Depends(current)):
     with db() as c:
         member(c,chat_id,user["id"])
         row=c.execute("SELECT COALESCE(MAX(id),0) FROM messages WHERE chat_id=?",(chat_id,)).fetchone()
-        safe_id=min(body.message_id,row[0])
-        c.execute("UPDATE members SET last_read_id=MAX(last_read_id,?) WHERE chat_id=? AND user_id=?",(safe_id,chat_id,user["id"]))
+        safe_id=max(0,min(body.message_id,row[0]))
+        previous=c.execute("SELECT last_read_id FROM members WHERE chat_id=? AND user_id=?",(chat_id,user["id"])).fetchone()[0]
+        if safe_id <= previous: return {"ok":True}
+        c.execute("UPDATE members SET last_read_id=? WHERE chat_id=? AND user_id=?",(safe_id,chat_id,user["id"]))
         ids=members(c,chat_id)
     await notify(ids,{"type":"read","chat_id":chat_id,"user_id":user["id"],"message_id":safe_id})
     return {"ok":True}

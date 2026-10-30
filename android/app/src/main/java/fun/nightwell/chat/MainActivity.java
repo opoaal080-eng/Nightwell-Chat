@@ -99,17 +99,33 @@ public final class MainActivity extends Activity {
     JSONArray array(byte[] bytes)throws Exception{return new JSONArray(new String(bytes,StandardCharsets.UTF_8));}
 
     void login(boolean register){enter("login");heading("NIGHTWELL CHAT");
-        hint(register?"Создание аккаунта по номеру и паролю":"Вход по номеру телефона и паролю");
-        EditText phone=field("+79991234567",false);phone.setInputType(3);
-        EditText name=register?field("Твоё имя",false):null;
+        hint(register?"Регистрация по логину и паролю":"Вход по логину и паролю");
+        EditText username=field("Логин (латиница, цифры, _)",false);
+        EditText name=register?field("Имя в чатах",false):null;
         EditText password=field("Пароль (минимум 8 символов)",true);
-        btn(register?"Зарегистрироваться":"Войти",()->perform(()->{
-            JSONObject args=payload("phone",phone.getText().toString().trim(),"password",password.getText().toString());
-            if(register){args.put("display_name",name.getText().toString().trim());args.put("discoverable",false);}
-            return http(register?"/auth/phone/register":"/auth/phone/login","POST",args);
-        },b->{JSONObject result=json(b);token=result.getString("access_token");getPreferences(0).edit().putString("accessToken",token).apply();getMe(false);}));
+        btn(register?"Зарегистрироваться":"Войти",()->{
+            String loginName=username.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            String pass=password.getText().toString();
+            String displayName=name==null?"":name.getText().toString().trim();
+            if(!loginName.matches("[a-z0-9_]{3,24}")){
+                note("Логин: 3–24 символа. Только латинские буквы, цифры и _");return;
+            }
+            if(pass.length()<8||pass.length()>256){
+                note("Пароль должен содержать от 8 до 256 символов");return;
+            }
+            if(register&&(displayName.isEmpty()||displayName.length()>60)){
+                note("Укажи имя длиной до 60 символов");return;
+            }
+            perform(()->{
+                JSONObject args=payload("username",loginName,"password",pass);
+                if(register)args.put("display_name",displayName);
+                return http(register?"/auth/register":"/auth/login","POST",args);
+            },b->{JSONObject result=json(b);token=result.getString("access_token");
+                getPreferences(0).edit().putString("accessToken",token).apply();getMe(false);
+            });
+        });
         btn(register?"Уже есть аккаунт? Войти":"Создать аккаунт",()->login(!register));
-        hint("SMS не требуется. Формат номера проверяется сервером, но право владения SIM-картой не подтверждается.");
+        hint("Номер телефона не нужен. Логин используется для входа и поиска в чате.");
     }
     void getMe(boolean toProfile){perform(()->http("/me","GET",null),b->{
         myself=json(b);meId=myself.optInt("id");

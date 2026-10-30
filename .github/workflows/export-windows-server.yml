@@ -1,0 +1,28 @@
+name: Export Nightwell Chat Windows Server
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/export-windows-server.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package current server sources
+        run: |
+          set -euo pipefail
+          mkdir -p export/Chat-Repo
+          cp -a server export/Chat-Repo/
+          cp Start_Nightwell_Chat.bat Stop_Nightwell_Chat.bat .env.example Caddyfile.example README.md PUSH-SETUP.md export/Chat-Repo/
+          find export/Chat-Repo -type f | sort
+          cd export
+          zip -q -r ../nightwell-chat-current-server.zip Chat-Repo
+          unzip -t ../nightwell-chat-current-server.zip | tail -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NightwellChat-Current-Server-Sources
+          path: nightwell-chat-current-server.zip
+          if-no-files-found: error

@@ -3,14 +3,15 @@ setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
 cd /d "%~dp0"
 
-rem Use a Python release with prebuilt packages. Python 3.15 was selected
-rem previously by "py -3", causing PyYAML/C++ wheel installation failures.
+rem Only accept a Python interpreter that actually ran code and printed
+rem a known marker. Some Python Install Manager versions return success even
+rem when a requested runtime does not exist.
 set "PY="
 where py >nul 2>nul
 if not errorlevel 1 (
     for %%V in (3.12 3.13 3.11 3.10) do (
         if not defined PY (
-            py -%%V -c "import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) else 1)" >nul 2>nul
+            py -%%V -c "import sys; print('NIGHTWELL_PY_READY' if (3,10) <= sys.version_info[:2] <= (3,13) else 'UNSUPPORTED')" 2>nul | findstr /X /C:"NIGHTWELL_PY_READY" >nul
             if not errorlevel 1 set "PY=py -%%V"
         )
     )
@@ -18,23 +19,23 @@ if not errorlevel 1 (
 if not defined PY (
     where python >nul 2>nul
     if not errorlevel 1 (
-        python -c "import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) else 1)" >nul 2>nul
+        python -c "import sys; print('NIGHTWELL_PY_READY' if (3,10) <= sys.version_info[:2] <= (3,13) else 'UNSUPPORTED')" 2>nul | findstr /X /C:"NIGHTWELL_PY_READY" >nul
         if not errorlevel 1 set "PY=python"
     )
 )
 if not defined PY goto :missing_python
 
-echo [Nightwell Chat] Using:
+echo [Nightwell Chat] Python runtime found:
 %PY% --version
 
-rem Repair an existing .venv made with Python 3.14/3.15 (or broken Python).
-rem Never touch .env, data, or the SQLite database.
+rem Recreate only the local virtual environment if it uses an unsuitable
+rem Python version or its original Python installation is now missing.
+rem Keep .env, data, and database files untouched.
 if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" -c "import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) else 1)" >nul 2>nul
+    ".venv\Scripts\python.exe" -c "import sys; print('NIGHTWELL_PY_READY' if (3,10) <= sys.version_info[:2] <= (3,13) else 'UNSUPPORTED')" 2>nul | findstr /X /C:"NIGHTWELL_PY_READY" >nul
     if errorlevel 1 (
-        echo [Nightwell Chat] Recreating incompatible .venv. Your data will be kept.
+        echo [Nightwell Chat] Repairing old .venv (chat data stays intact)...
         rmdir /s /q ".venv"
-        if exist ".venv\Scripts\python.exe" goto :error
     )
 )
 if not exist ".venv\Scripts\python.exe" (
@@ -42,7 +43,12 @@ if not exist ".venv\Scripts\python.exe" (
     %PY% -m venv ".venv"
     if errorlevel 1 goto :error
 )
-echo [Nightwell Chat] Checking Python dependencies...
+if not exist ".venv\Scripts\python.exe" goto :error
+
+".venv\Scripts\python.exe" -c "import sys; print('NIGHTWELL_PY_READY' if (3,10) <= sys.version_info[:2] <= (3,13) else 'UNSUPPORTED')" 2>nul | findstr /X /C:"NIGHTWELL_PY_READY" >nul
+if errorlevel 1 goto :error
+
+echo [Nightwell Chat] Installing dependencies...
 ".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r "server\requirements.txt"
 if errorlevel 1 goto :error
 
@@ -53,10 +59,13 @@ exit /b 0
 
 :missing_python
 echo.
-echo [Nightwell Chat] Python 3.10 - 3.13 is required. Python 3.15 is not supported by this launcher.
-echo [Nightwell Chat] Recommended: install Python 3.12 from https://www.python.org/downloads/
-echo [Nightwell Chat] You can also run: winget install -e --id Python.Python.3.12
-echo [Nightwell Chat] Restart this launcher after installation. Keep .env and data.
+echo [Nightwell Chat] Python 3.10 - 3.13 was not found.
+echo [Nightwell Chat] Python 3.15 cannot be used with this server setup.
+echo [Nightwell Chat] To install Python 3.12, open PowerShell and run:
+echo     py install 3.12
+echo [Nightwell Chat] If that is unavailable, run:
+echo     winget install -e --id Python.Python.3.12
+echo [Nightwell Chat] Then restart this BAT file. Existing chat data is safe.
 pause
 exit /b 1
 

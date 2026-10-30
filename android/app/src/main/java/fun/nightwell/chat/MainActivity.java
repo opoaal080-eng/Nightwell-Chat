@@ -1,6 +1,8 @@
 package fun.nightwell.chat;
 
 import android.app.*;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.content.*;
 import android.database.Cursor;
 import android.graphics.Bitmap;
@@ -44,6 +46,10 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state){
         super.onCreate(state);getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(BG);
         token=getPreferences(0).getString("accessToken","");
+        ChatPushService.makeChannels(this);
+        if(Build.VERSION.SDK_INT>=33 &&
+          checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);
         if(token.isEmpty())login(false); else getMe(false);
     }
     @Override protected void onDestroy(){handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
@@ -129,6 +135,7 @@ public final class MainActivity extends Activity {
     }
     void getMe(boolean toProfile){perform(()->http("/me","GET",null),b->{
         myself=json(b);meId=myself.optInt("id");
+        ChatPushService.refreshToken(this);
         if(toProfile)profile();else inbox();
     });}
     void inbox(){enter("inbox");heading("Чаты");
@@ -263,7 +270,10 @@ public final class MainActivity extends Activity {
             page.addView(discoverable);
             discoverable.setOnCheckedChangeListener((x,on)->perform(()->http("/me/phone/visibility","PATCH",new JSONObject().put("discoverable",on)),ok->{}));
         });
-        btn("Выйти",()->{token="";getPreferences(0).edit().remove("accessToken").apply();login(false);});
+        btn("Выйти",()->{
+            ChatPushService.unregister(this);
+            token="";getPreferences(0).edit().remove("accessToken").apply();login(false);
+        });
     }
     void startCall(){int id=otherId;if(id<=0)return;perform(()->http("/calls/direct/"+id,"POST",null),b->openCall(json(b)));}
     void checkIncoming(){if(!"inbox".equals(screen))return;

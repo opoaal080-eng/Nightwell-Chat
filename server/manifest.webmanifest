@@ -1,0 +1,19 @@
+{
+  "id": "/chat",
+  "name": "Nightwell Chat",
+  "short_name": "NW Chat",
+  "description": "Ночной мессенджер Nightwell с уведомлениями",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#080808",
+  "theme_color": "#080808",
+  "icons": [
+    {
+      "src": "/chat-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

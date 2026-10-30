@@ -17,8 +17,13 @@ from typing import Literal
 import jwt
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Query, Request, UploadFile, File, Form
 from pydantic import BaseModel, Field
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from PIL import Image, ImageOps, UnidentifiedImageError
+import json
+import logging
+from urllib.parse import urlparse
+from pydantic import HttpUrl
+import push_delivery
 
 DB_PATH = Path(os.getenv("DB_PATH", "./nightwell_chat.db"))
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(DB_PATH.parent / "media"))).resolve()
@@ -106,6 +111,14 @@ def setup():
             created_at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_phone_search_user ON phone_search_log(user_id,created_at);
+        CREATE TABLE IF NOT EXISTS push_devices (
+            kind TEXT NOT NULL CHECK(kind IN ('fcm','web')),
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_push_user ON push_devices(user_id);
         """)
 
 @asynccontextmanager
@@ -113,7 +126,7 @@ async def lifespan(app: FastAPI):
     setup()
     yield
 
-app = FastAPI(title="Nightwell Chat", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Nightwell Chat", version="0.8.0", lifespan=lifespan)
 
 class Credentials(BaseModel):
     username: str = Field(min_length=3,max_length=24)
@@ -198,6 +211,125 @@ def members(c, chat_id):
 
 @app.get("/health")
 def health(): return {"ok":True,"service":"nightwell-chat"}
+
+# Device registrations belong to the authenticated user; no push credentials
+# are ever accepted from anonymous callers. Old accounts/DB rows are kept.
+class FcmDevice(BaseModel):
+    token: str = Field(min_length=50, max_length=4096)
+
+class WebKeys(BaseModel):
+    p256dh: str = Field(min_length=40,max_length=256)
+    auth: str = Field(min_length=12,max_length=128)
+
+class WebDevice(BaseModel):
+    endpoint: HttpUrl
+    expirationTime: int | None = None
+    keys: WebKeys
+
+def _save_push(uid:int, kind:str, value:str) -> None:
+    digest=push_delivery.token_hash(value)
+    with db() as c:
+        c.execute("""INSERT INTO push_devices(kind,token_hash,user_id,token)
+            VALUES(?,?,?,?) ON CONFLICT(token_hash)
+            DO UPDATE SET user_id=excluded.user_id,kind=excluded.kind,token=excluded.token""",
+            (kind,digest,uid,value))
+        # Cap per-user active tokens; prune older entries.
+        old=c.execute("SELECT token_hash FROM push_devices WHERE user_id=? AND kind=? ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 12",(uid,kind)).fetchall()
+        for item in old: c.execute("DELETE FROM push_devices WHERE token_hash=?",(item[0],))
+
+@app.post("/push/fcm/register")
+def register_fcm(device:FcmDevice,user=Depends(current)):
+    if not re.fullmatch(r"[A-Za-z0-9_:.-]{50,4096}",device.token):
+        raise HTTPException(422,"Invalid device token")
+    _save_push(user["id"],"fcm",device.token)
+    return {"ok":True}
+
+@app.delete("/push/fcm/unregister")
+def unregister_fcm(device:FcmDevice,user=Depends(current)):
+    with db() as c:
+        c.execute("DELETE FROM push_devices WHERE kind='fcm' AND user_id=? AND token_hash=?",
+                  (user["id"],push_delivery.token_hash(device.token)))
+    return {"ok":True}
+
+def _web_origin_allowed(address:str) -> bool:
+    try:
+        parsed=urlparse(address)
+        host=(parsed.hostname or "").lower()
+        return (parsed.scheme=="https" and parsed.port in (None,443)
+                and any(host==suffix or host.endswith("."+suffix) for suffix in (
+                    "push.apple.com", "fcm.googleapis.com", "push.services.mozilla.com",
+                    "notify.windows.com", "push.microsoft.com"
+                )))
+    except (ValueError,AttributeError):
+        return False
+
+@app.post("/push/web/register")
+def register_web(device:WebDevice,user=Depends(current)):
+    endpoint=str(device.endpoint)
+    if not _web_origin_allowed(endpoint):
+        raise HTTPException(422,"Unsupported push provider")
+    value=json.dumps({"endpoint":endpoint,"keys":device.keys.model_dump()},sort_keys=True)
+    _save_push(user["id"],"web",value)
+    return {"ok":True}
+
+@app.delete("/push/web/unregister")
+def unregister_web(user=Depends(current)):
+    with db() as c: c.execute("DELETE FROM push_devices WHERE kind='web' AND user_id=?",(user["id"],))
+    return {"ok":True}
+
+@app.get("/push/vapid-public")
+def vapid_public():
+    keys=push_delivery.ensure_vapid(DB_PATH.parent)
+    return {"public_key":keys[1] if keys else None}
+
+@app.get("/push/status")
+def push_status(user=Depends(current)):
+    with db() as c:
+        counts={r["kind"]:r["count"] for r in c.execute(
+            "SELECT kind,COUNT(*) AS count FROM push_devices WHERE user_id=? GROUP BY kind",(user["id"],))}
+    return {"devices":counts,"fcm_ready":push_delivery.firebase_ready(),
+            "web_ready":push_delivery.ensure_vapid(DB_PATH.parent) is not None}
+
+# Perform network delivery outside request latency; no message body is logged.
+_push_jobs: set[asyncio.Task] = set()
+
+def _schedule_push(recipient_ids:list[int], payload:dict) -> None:
+    unique=list(set(recipient_ids))
+    if not unique:return
+    placeholders=",".join("?" for _ in unique)
+    with db() as c:
+        devices=[dict(row) for row in c.execute(
+            f"SELECT kind,token FROM push_devices WHERE user_id IN ({placeholders})",
+            unique).fetchall()]
+    if not devices:return
+    task=asyncio.create_task(asyncio.to_thread(push_delivery.deliver_many, devices, payload, DB_PATH.parent))
+    _push_jobs.add(task)
+    task.add_done_callback(_push_jobs.discard)
+
+@app.get("/",response_class=HTMLResponse,include_in_schema=False)
+def web_home():
+    return FileResponse(Path(__file__).with_name("web_client.html"),media_type="text/html",
+                        headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"})
+
+@app.get("/chat-web.js",include_in_schema=False)
+def web_script():
+    return FileResponse(Path(__file__).with_name("chat-web.js"),media_type="text/javascript",
+                        headers={"Cache-Control":"no-store"})
+
+@app.get("/sw.js",include_in_schema=False)
+def web_service_worker():
+    return FileResponse(Path(__file__).with_name("sw.js"),media_type="text/javascript",
+                        headers={"Cache-Control":"no-store","Service-Worker-Allowed":"/"})
+
+@app.get("/manifest.webmanifest",include_in_schema=False)
+def web_manifest():
+    return FileResponse(Path(__file__).with_name("manifest.webmanifest"),media_type="application/manifest+json")
+
+@app.get("/chat-icon.svg",include_in_schema=False)
+def web_icon():
+    return FileResponse(Path(__file__).with_name("chat-icon.svg"),media_type="image/svg+xml")
+
+
 
 @app.post("/auth/register",status_code=201)
 def register(data: Registration):
@@ -488,6 +620,9 @@ async def send_attachment(chat_id: int, file: UploadFile = File(...), caption: s
         (MEDIA_DIR / key).unlink(missing_ok=True)
         raise
     await notify(ids,{"type":"message","chat_id":chat_id,"message":result})
+    _schedule_push([x for x in ids if x != user["id"]],
+        {"type":"message","title":user["display_name"],"body":"📎 "+name,
+         "chat_id":str(chat_id),"message_id":str(result["id"])})
     return result
 
 @app.get("/attachments/{attachment_id}")
@@ -591,6 +726,9 @@ async def send_message(chat_id:int,payload:MessageCreate,user=Depends(current)):
         msg=message_view(c,c.execute("SELECT * FROM messages WHERE id=?",(mid,)).fetchone())
         ids=members(c,chat_id)
     await notify(ids,{"type":"message","chat_id":chat_id,"message":msg})
+    _schedule_push([x for x in ids if x != user["id"]],
+        {"type":"message","title":user["display_name"],"body":msg["body"][:160],
+         "chat_id":str(chat_id),"message_id":str(msg["id"])})
     return msg
 
 def own_message(c,mid,uid):
@@ -696,6 +834,8 @@ async def create_voice_call(other_id: int, user=Depends(current)):
         c.execute("INSERT INTO calls VALUES (?,?,?,?,?,?,?)",
                   (cid,pair["chat_id"],user["id"],other_id,"ringing",now,now+CALL_RING_SECONDS))
     await notify([other_id], {"type":"incoming_call", "call_id":cid, "from_id":user["id"]})
+    _schedule_push([other_id],{"type":"incoming_call","title":"Входящий звонок",
+        "body":user["display_name"]+" звонит","call_id":cid,"chat_id":str(pair["chat_id"])})
     return {**call_public({"id":cid,"chat_id":pair["chat_id"],"caller_id":user["id"],
                            "callee_id":other_id,"status":"ringing","created_at":now}),**call_target(cid,user["id"])}
 

@@ -15,28 +15,29 @@ Independent **black-and-white** messenger by Nightwell. Native iPhone UI (SwiftU
 
 ## Start backend on Windows (NO Docker)
 
-1. Install **Python 3.10 or newer** from python.org (with the Windows Python Launcher \`py\` or add Python to PATH).
-2. Download or clone this repository and double-click **\`Start_Nightwell_Chat.bat\`**.
-3. The launcher automatically creates a private \`.venv\`, installs Python dependencies and starts the server.
-4. The first run also creates \`.env\` with a strong random \`SECRET_KEY\` and the \`data/nightwell_chat.db\` SQLite database. **Keep \`.env\` secret and back up the \`data\` directory.** Never delete \`.env\` when upgrading or existing sessions will stop working.
-5. Open **http://127.0.0.1:8009/health** in your browser. It should return \`{"ok":true,"service":"nightwell-chat"}\`.
-6. To stop the local server, use **\`Stop_Nightwell_Chat.bat\`**, or press Ctrl+C in the server window.
+1. Install **Python 3.10 or newer** from python.org (with the Windows Python Launcher `py` or add Python to PATH).
+2. Download or clone this repository and double-click **`Start_Nightwell_Chat.bat`**.
+3. The launcher automatically creates a private `.venv`, installs Python dependencies and starts the server.
+4. The first run also creates `.env` with a strong random `SECRET_KEY` and the `data/nightwell_chat.db` SQLite database. **Keep `.env` secret and back up the `data` directory.** Never delete `.env` when upgrading or existing sessions will stop working.
+5. Open **http://127.0.0.1:8009/health** in your browser. It should return `{"ok":true,"service":"nightwell-chat"}`.
+6. To stop the local server, use **`Stop_Nightwell_Chat.bat`**, or press Ctrl+C in the server window.
 
-The application listens **only on 127.0.0.1:8009**. You do **not** need to open this port in your router. To make iPhone clients connect over the internet, point \`chat.nightwell.fun\` at your server and add the following to your existing Caddy configuration:
+The application listens **only on 127.0.0.1:8009**. You do **not** need to open this port in your router. To make iPhone clients connect over the internet, point `chat.nightwell.fun` at your server and add the following to your existing Caddy configuration:
 
-\`\`\`caddy
+```caddy
 chat.nightwell.fun {
     reverse_proxy 127.0.0.1:8009
 }
-\`\`\`
+```
 
-Caddy handles HTTPS and WebSockets and can coexist with Nightwell Music on the same host. Forward **80/443 to Caddy**, not 8009. The iPhone app initially uses \`https://chat.nightwell.fun\` (modifiable in the app's Settings). The hostname is not automatically configured by this repository.
+Caddy handles HTTPS and WebSockets and can coexist with Nightwell Music on the same host. Forward **80/443 to Caddy**, not 8009. The iPhone app initially uses `https://chat.nightwell.fun` (modifiable in the app's Settings). The hostname is not automatically configured by this repository.
 
 ### Optional: Docker deployment
 
-If you prefer Docker, copy \`.env.example\` to \`.env\`, replace the placeholder \`SECRET_KEY\` with a random value from \`python -c "import secrets; print(secrets.token_urlsafe(48))"\`, and run \`docker compose up -d --build\`. The Docker deployment uses its **own volume**; it does not share the non-Docker \`data\` directory automatically. To stop Docker deployment, run \`docker compose down\`.
+If you prefer Docker, copy `.env.example` to `.env`, replace the placeholder `SECRET_KEY` with a random value from `python -c "import secrets; print(secrets.token_urlsafe(48))"`, and run `docker compose up -d --build`. The Docker deployment uses its **own volume**; it does not share the non-Docker `data` directory automatically. To stop Docker deployment, run `docker compose down`.
 
 Neither deployment requires changes to the existing Nightwell Music server.
+
 ## iOS
 
 1. In the `ios` folder run `xcodegen generate` on macOS (XcodeGen is installed with `brew install xcodegen`).

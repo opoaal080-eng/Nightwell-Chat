@@ -1,0 +1,8 @@
+.env
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+__pycache__/
+.pytest_cache/
+.DS_Store
+ios/*.xcodeproj/

@@ -19,8 +19,40 @@ enum AdminService: String, CaseIterable, Identifiable {
 struct ProbeStatus {
     let available: Bool
     let statusText: String
-    let latencyMs: Int?
+    // Network TTFB excludes initial DNS, TCP, and TLS setup.
+    let ttfbMs: Int?
+    // Entire HTTPS request, including connection setup and body transfer.
+    let totalMs: Int?
+    let dnsMs: Int?
+    let tcpMs: Int?
+    let tlsMs: Int?
+    let reusedConnection: Bool
     let checkedAt: Date
+}
+
+// URLSessionTaskMetrics exposes the actual request phases.
+// A shared URLSession allows keep-alive reuse across refreshes.
+final class ProbeMetricsCollector: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var latest: URLSessionTaskMetrics?
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didFinishCollecting metrics: URLSessionTaskMetrics) {
+        lock.lock()
+        latest = metrics
+        lock.unlock()
+    }
+
+    func take() -> URLSessionTaskMetrics? {
+        lock.lock()
+        defer { lock.unlock() }
+        return latest
+    }
+}
+
+private func durationMs(_ start: Date?, _ end: Date?) -> Int? {
+    guard let start, let end else { return nil }
+    return max(0, Int(end.timeIntervalSince(start) * 1000))
 }
 
 struct RemoteService: Codable {
@@ -108,17 +140,38 @@ enum TokenVault {
         request.httpMethod = "GET"
         request.timeoutInterval = 9
         request.cachePolicy = .reloadIgnoringLocalCacheData
+        // Prevent intermediate caches from presenting a cached response as a network sample.
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        let collector = ProbeMetricsCollector()
         let start = Date()
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await URLSession.shared.data(for: request, delegate: collector)
             guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             let ok = (200..<400).contains(http.statusCode)
-            let time = Int(Date().timeIntervalSince(start) * 1000)
-            probes[service] = ProbeStatus(available: ok, statusText: ok ? "Доступен" : "HTTP \(http.statusCode)",
-                                            latencyMs: time, checkedAt: Date())
+            let total = max(0, Int(Date().timeIntervalSince(start) * 1000))
+            let network = collector.take()?.transactionMetrics.last
+            let ttfb = durationMs(network?.requestStartDate, network?.responseStartDate)
+            probes[service] = ProbeStatus(
+                available: ok,
+                statusText: ok ? "Доступен" : "HTTP \(http.statusCode)",
+                ttfbMs: ttfb,
+                totalMs: total,
+                dnsMs: durationMs(network?.domainLookupStartDate, network?.domainLookupEndDate),
+                tcpMs: durationMs(network?.connectStartDate, network?.connectEndDate),
+                tlsMs: durationMs(network?.secureConnectionStartDate, network?.secureConnectionEndDate),
+                reusedConnection: network?.isReusedConnection ?? false,
+                checkedAt: Date()
+            )
         } catch {
-            probes[service] = ProbeStatus(available: false,
-                                           statusText: error.localizedDescription, latencyMs: nil, checkedAt: Date())
+            probes[service] = ProbeStatus(
+                available: false,
+                statusText: error.localizedDescription,
+                ttfbMs: nil,
+                totalMs: max(0, Int(Date().timeIntervalSince(start) * 1000)),
+                dnsMs: nil, tcpMs: nil, tlsMs: nil,
+                reusedConnection: false,
+                checkedAt: Date()
+            )
         }
     }
 
@@ -292,8 +345,26 @@ struct ServiceScreen: View {
                         Text(probe?.statusText ?? "Проверка…")
                             .font(.headline)
                         Spacer()
-                        if let ms = probe?.latencyMs {
+                        if let ms = probe?.totalMs {
                             Text("\(ms) мс").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Divider().overlay(.white.opacity(0.1))
+                    Text("ЗАДЕРЖКА HTTPS")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        metricTile("TTFB", probe?.ttfbMs)
+                        metricTile("Весь запрос", probe?.totalMs)
+                    }
+                    Text("TTFB: время обработки и передачи первого байта после отправки запроса. Полное время включает DNS, TCP, TLS и загрузку. Это не ICMP-пинг.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    if let probe {
+                        if let dns = probe.dnsMs { infoRow("DNS", "\(dns) мс") }
+                        if let tcp = probe.tcpMs { infoRow("TCP", "\(tcp) мс") }
+                        if let tls = probe.tlsMs { infoRow("TLS", "\(tls) мс") }
+                        if probe.reusedConnection {
+                            Label("Повторно использовано HTTPS-соединение", systemImage: "arrow.triangle.2.circlepath")
+                                .font(.caption2).foregroundStyle(.secondary)
                         }
                     }
                     Divider().overlay(.white.opacity(0.1))
@@ -380,6 +451,18 @@ struct ServiceScreen: View {
         }
     }
 
+    private func metricTile(_ title: String, _ value: Int?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value.map { "\($0) мс" } ?? "—")
+                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+    }
+
     private func infoRow(_ caption: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(caption).foregroundStyle(.secondary)
@@ -445,7 +528,7 @@ struct AdminSettingsScreen: View {
                     .font(.footnote)
             }
             Section("Приложение") {
-                LabeledContent("Версия", value: "1.0.0")
+                LabeledContent("Версия", value: "1.1.0")
                 LabeledContent("Сервисы", value: "Music · Chat")
             }
         }

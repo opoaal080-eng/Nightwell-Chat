@@ -35,6 +35,9 @@ jobs:
         run: |
           set -euo pipefail
           test -f admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist
+          test "$(plutil -extract UILaunchStoryboardName raw admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist)" = "LaunchScreen"
+          test "$(plutil -extract CFBundleVersion raw admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist)" = "2"
+          find admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app -name "LaunchScreen.storyboardc" | grep -q .
           mkdir -p admin-dist/Payload
           ditto admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app admin-dist/Payload/NightwellAdmin.app
           ( cd admin-dist && /usr/bin/zip -q -r NightwellAdmin-unsigned.ipa Payload )

@@ -6,6 +6,7 @@ struct Person: Codable, Identifiable, Hashable {
     let id: Int
     let username: String
     let display_name: String
+    let has_avatar: Bool?
 }
 struct AuthResponse: Decodable {
     let access_token: String
@@ -31,6 +32,12 @@ struct Reaction: Decodable, Identifiable {
     let count: Int
     var id: String { emoji }
 }
+struct ChatAttachment: Decodable, Identifiable {
+    let id: Int
+    let filename: String
+    let content_type: String
+    let byte_size: Int
+}
 struct ChatMessage: Decodable, Identifiable {
     let id: Int
     let chat_id: Int
@@ -42,6 +49,7 @@ struct ChatMessage: Decodable, Identifiable {
     let edited_at: String?
     let deleted: Int
     let reactions: [Reaction]
+    let attachment: ChatAttachment?
 }
 struct EmptyResult: Decodable { let ok: Bool }
 struct ErrorResponse: Decodable { let detail: String? }
@@ -52,6 +60,17 @@ struct GroupPayload: Encodable { let title: String; let user_ids: [Int] }
 struct ReactionPayload: Encodable { let emoji: String }
 struct ReadPayload: Encodable { let message_id: Int }
 struct ProfilePayload: Encodable { let display_name: String }
+struct PhonePasswordPayload: Encodable { let phone: String; let password: String }
+struct PhoneRegistrationPayload: Encodable {
+    let phone: String
+    let password: String
+    let display_name: String
+    let discoverable: Bool
+}
+struct PhoneLinkPayload: Encodable { let phone: String; let password: String; let discoverable: Bool }
+struct PhoneStatus: Decodable { let phone: String?; let discoverable: Bool }
+struct PhoneVisibilityPayload: Encodable { let discoverable: Bool }
+
 
 private enum SecureToken {
     static let account = "nightwell.chat.session"
@@ -95,6 +114,7 @@ enum NetworkError: LocalizedError {
     @Published var eventVersion = 0
     @Published var alertText = ""
     @Published var loading = false
+    @Published var phoneStatus: PhoneStatus?
     @Published var serverURL = UserDefaults.standard.string(forKey: "nightwell.server") ?? "https://chat.nightwell.fun"
     private var socket: URLSessionWebSocketTask?
     private var socketJob: Task<Void, Never>?
@@ -126,6 +146,71 @@ enum NetworkError: LocalizedError {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    func protectedData(_ path: String) async throws -> Data {
+        var req = URLRequest(url: try url(path))
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NetworkError.server("Не удалось загрузить файл")
+        }
+        return data
+    }
+
+    private func multipart(_ path: String, data: Data, filename: String, mime: String) async throws -> Data {
+        let marker = "NW-\(UUID().uuidString)"
+        var req = URLRequest(url: try url(path))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 90
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("multipart/form-data; boundary=\(marker)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        // File name is normalized by the server as well.
+        body = Data("--\(marker)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(filename.replacingOccurrences(of: "\"", with: "_"))\"\r\nContent-Type: \(mime)\r\n\r\n".utf8)
+        body.append(data)
+        body.append(Data("\r\n--\(marker)--\r\n".utf8))
+        req.httpBody = body
+        let (result, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw NetworkError.server("Нет ответа") }
+        guard (200..<300).contains(http.statusCode) else {
+            let detail = (try? JSONDecoder().decode(ErrorResponse.self, from: result).detail) ?? "HTTP \(http.statusCode)"
+            throw NetworkError.server(detail)
+        }
+        return result
+    }
+    func setAvatar(_ data: Data) async {
+        do {
+            let _: EmptyResult = try JSONDecoder().decode(EmptyResult.self, from: try await multipart("/me/avatar", data:data, filename:"avatar.jpg", mime:"image/jpeg"))
+            me = try await request("/me")
+            eventVersion += 1
+        } catch { alertText = error.localizedDescription }
+    }
+    func removeAvatar() async {
+        do {
+            let _: EmptyResult = try await request("/me/avatar", method:"DELETE")
+            me = try await request("/me")
+            eventVersion += 1
+        } catch { alertText = error.localizedDescription }
+    }
+    func upload(chatID: Int, data: Data, filename: String, mime: String) async -> Bool {
+        do {
+            let result = try await multipart("/chats/\(chatID)/attachments", data:data, filename:filename, mime:mime)
+            _ = try JSONDecoder().decode(ChatMessage.self, from:result)
+            eventVersion += 1
+            return true
+        } catch { alertText = error.localizedDescription; return false }
+    }
+    func download(_ attachment: ChatAttachment) async -> URL? {
+        do {
+            let data = try await protectedData("/attachments/\(attachment.id)")
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("NWChat-\(UUID().uuidString)",isDirectory:true)
+            try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+            let name = URL(fileURLWithPath: attachment.filename).lastPathComponent
+            let destination = folder.appendingPathComponent(name)
+            try data.write(to:destination,options:.atomic)
+            return destination
+        } catch { alertText = error.localizedDescription; return nil }
+    }
+
     func bootstrap() async {
         guard !token.isEmpty else { return }
         do {
@@ -154,6 +239,61 @@ enum NetworkError: LocalizedError {
         } catch { alertText = error.localizedDescription }
     }
 
+    func loginByPhone(_ phone: String, password: String, displayName: String?, discoverable: Bool = false) async -> Bool {
+        loading = true
+        defer { loading = false }
+        do {
+            let result: AuthResponse
+            if let displayName {
+                result = try await request("/auth/phone/register", method: "POST",
+                    body: PhoneRegistrationPayload(phone: phone, password: password,
+                        display_name: displayName, discoverable: discoverable), authenticated: false)
+            } else {
+                result = try await request("/auth/phone/login", method: "POST",
+                    body: PhonePasswordPayload(phone: phone, password: password), authenticated: false)
+            }
+            token = result.access_token
+            SecureToken.save(token)
+            me = result.user
+            await reloadChats()
+            startSocket()
+            return true
+        } catch { alertText = error.localizedDescription; return false }
+    }
+
+    func linkPhone(_ phone: String, password: String, discoverable: Bool) async -> Bool {
+        loading = true
+        defer { loading = false }
+        do {
+            let _: EmptyResult = try await request("/me/phone/link", method: "POST",
+                body: PhoneLinkPayload(phone: phone, password: password, discoverable: discoverable))
+            await loadPhoneStatus()
+            return true
+        } catch { alertText = error.localizedDescription; return false }
+    }
+
+    func loadPhoneStatus() async {
+        guard !token.isEmpty else { return }
+        do { phoneStatus = try await request("/me/phone") }
+        catch { alertText = error.localizedDescription }
+    }
+
+    func setDiscoverable(_ value: Bool) async {
+        do {
+            let _: EmptyResult = try await request("/me/phone/visibility", method: "PATCH",
+                body: PhoneVisibilityPayload(discoverable: value))
+            await loadPhoneStatus()
+        } catch { alertText = error.localizedDescription }
+    }
+
+    func findByPhone(_ phone: String) async -> Person? {
+        guard let escaped = phone.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "+&=?#"))) else { return nil }
+        do {
+            let result: Person? = try await request("/users/by-phone?phone=\(escaped)")
+            return result
+        } catch { alertText = error.localizedDescription; return nil }
+    }
+
     func logout() {
         socketJob?.cancel()
         socket?.cancel(with: .normalClosure, reason: nil)
@@ -163,6 +303,7 @@ enum NetworkError: LocalizedError {
         SecureToken.save("")
         chats = []
         me = nil
+        phoneStatus = nil
     }
 
     func reloadChats() async {

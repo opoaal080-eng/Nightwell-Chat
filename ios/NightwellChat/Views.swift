@@ -1,4 +1,7 @@
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
+import QuickLook
 
 private let ink = Color.black
 private let white = Color.white
@@ -44,6 +47,81 @@ struct Logo: View {
 }
 
 struct LoginView: View {
+    @State private var legacy = false
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                Spacer(minLength: 48)
+                Logo()
+                if legacy { LegacyLoginView() }
+                else { PhoneEntryView(linking: false) }
+                Button(legacy ? "Вход по номеру и паролю" : "Старый аккаунт: логин и пароль") {
+                    legacy.toggle()
+                }.font(.footnote).foregroundStyle(muted)
+            }.padding(22)
+        }.background(ink)
+    }
+}
+
+struct PhoneEntryView: View {
+    @EnvironmentObject var store: ChatStore
+    @Environment(\.dismiss) private var dismiss
+    let linking: Bool
+    @State private var registering = false
+    @State private var phone = ""
+    @State private var password = ""
+    @State private var name = ""
+    @State private var discoverable = false
+
+    var body: some View {
+        VStack(spacing: 15) {
+            Text(linking ? "Привязать телефон" : (registering ? "Регистрация" : "Вход по телефону"))
+                .font(.system(size: 25, weight: .semibold))
+            Text("Введи номер с кодом страны, например +79991234567.")
+                .font(.subheadline).foregroundStyle(muted).multilineTextAlignment(.center)
+            TextField("+79991234567", text: $phone)
+                .keyboardType(.phonePad).textContentType(.telephoneNumber)
+                .textFieldStyle(.roundedBorder)
+            SecureField("Пароль от 8 символов", text: $password)
+                .textContentType(linking ? .password : (registering ? .newPassword : .password))
+                .textFieldStyle(.roundedBorder)
+            if registering && !linking {
+                TextField("Твоё имя", text: $name)
+                    .textContentType(.nickname).textFieldStyle(.roundedBorder)
+            }
+            if linking || registering {
+                Toggle("Разрешить поиск меня по номеру", isOn: $discoverable)
+                    .font(.subheadline)
+            }
+            Text("Без SMS проверяется только формат номера. Принадлежность номера не подтверждается.")
+                .font(.caption).foregroundStyle(muted).multilineTextAlignment(.center)
+            Button {
+                Task {
+                    if linking {
+                        let ok = await store.linkPhone(phone, password: password, discoverable: discoverable)
+                        if ok { dismiss() }
+                    } else {
+                        _ = await store.loginByPhone(phone, password: password,
+                            displayName: registering ? name : nil, discoverable: discoverable)
+                    }
+                }
+            } label: {
+                Text(linking ? "Привязать номер" : (registering ? "Создать аккаунт" : "Войти"))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black)
+            .disabled(store.loading || phone.count < 8 || password.count < 8 || (registering && name.trimmingCharacters(in: .whitespaces).isEmpty))
+            if !linking {
+                Button(registering ? "Есть аккаунт? Войти" : "Нет аккаунта? Зарегистрироваться") {
+                    registering.toggle()
+                }.font(.footnote).foregroundStyle(muted)
+            }
+            if store.loading { ProgressView().tint(.white) }
+        }.padding(20).glass()
+    }
+}
+
+struct LegacyLoginView: View {
     @EnvironmentObject var store: ChatStore
     @State private var register = false
     @State private var username = ""
@@ -52,8 +130,6 @@ struct LoginView: View {
     var body: some View {
         ScrollView {
             VStack(spacing:30) {
-                Spacer(minLength:70)
-                Logo()
                 VStack(spacing:16) {
                     Text(register ? "Создать аккаунт" : "С возвращением")
                         .font(.system(size:27,weight:.semibold))
@@ -96,8 +172,7 @@ struct InboxView: View {
                     List(store.chats) { chat in
                         Button { selected=chat } label: {
                             HStack(spacing:13) {
-                                Circle().fill(.white.opacity(0.12)).frame(width:53,height:53)
-                                    .overlay(Text(String(chat.title.prefix(1)).uppercased()).font(.title2).foregroundStyle(.white))
+                                ProfileAvatar(user: chat.other_user, fallback: chat.title, size:53)
                                 VStack(alignment:.leading,spacing:5) {
                                     HStack {
                                         Text(chat.title).font(.headline).foregroundStyle(.white)
@@ -137,24 +212,71 @@ struct PeopleView: View {
     @Environment(\.dismiss) var dismiss
     @State private var query = ""
     @State private var people: [Person] = []
+    @State private var phoneQuery = ""
+    @State private var phonePerson: Person?
+    @State private var phoneSearched = false
+    @State private var showContacts = false
     let onOpen: (Conversation) -> Void
+
+    private func lookUpPhone() async {
+        phoneSearched = true
+        phonePerson = await store.findByPhone(phoneQuery)
+    }
+    private func start(_ person: Person) {
+        Task { if let chat = await store.openDirect(person) { onOpen(chat) } }
+    }
     var body: some View {
         NavigationStack {
             List {
-                HStack {
-                    TextField("Поиск по имени или @нику",text:$query).textInputAutocapitalization(.never)
-                        .autocorrectionDisabled().onSubmit { Task { people=await store.find(query) } }
-                    Button { Task { people=await store.find(query) } } label:{ Image(systemName:"magnifyingglass") }
-                }
-                ForEach(people) { person in
-                    Button { Task { if let chat=await store.openDirect(person) { onOpen(chat) } } } label: {
-                        VStack(alignment:.leading) { Text(person.display_name).foregroundStyle(.white)
-                            Text("@\(person.username)").foregroundStyle(muted).font(.caption) }
+                Section("Поиск по имени") {
+                    HStack {
+                        TextField("Имя или @ник", text: $query)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .onSubmit { Task { people = await store.find(query) } }
+                        Button { Task { people = await store.find(query) } } label: {
+                            Image(systemName: "magnifyingglass")
+                        }
                     }
+                    ForEach(people) { person in
+                        Button { start(person) } label: {
+                            VStack(alignment: .leading) {
+                                Text(person.display_name).foregroundStyle(.white)
+                                Text("@\(person.username)").foregroundStyle(muted).font(.caption)
+                            }
+                        }
+                    }
+                }
+                Section("Поиск по номеру") {
+                    HStack {
+                        TextField("+79991234567", text: $phoneQuery)
+                            .keyboardType(.phonePad).textContentType(.telephoneNumber)
+                        Button("Найти") { Task { await lookUpPhone() } }
+                            .disabled(phoneQuery.count < 8)
+                    }
+                    Button { showContacts = true } label: {
+                        Label("Выбрать из контактов iPhone", systemImage: "person.crop.circle")
+                    }
+                    if let person = phonePerson {
+                        Button { start(person) } label: {
+                            Label(person.display_name, systemImage: "bubble.left")
+                        }
+                    } else if phoneSearched {
+                        Text("Пользователь не найден или запретил поиск по номеру")
+                            .font(.caption).foregroundStyle(muted)
+                    }
+                    Text("Адресная книга остаётся на iPhone. На сервер отправляется только номер, который ты выбрал.")
+                        .font(.caption).foregroundStyle(muted)
                 }
             }.scrollContentBackground(.hidden).background(ink)
                 .navigationTitle("Новый чат").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement:.topBarLeading) { Button("Закрыть") { dismiss() } } }
+                .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Закрыть") { dismiss() } } }
+                .sheet(isPresented: $showContacts) {
+                    LocalContactsView { selected in
+                        phoneQuery = selected
+                        showContacts = false
+                        Task { await lookUpPhone() }
+                    }
+                }
         }
     }
 }
@@ -203,6 +325,10 @@ struct ChatView: View {
     @State private var editing: ChatMessage?
     @State private var editText = ""
     @State private var older = true
+    @State private var chosenPhoto: PhotosPickerItem?
+    @State private var choosingFile = false
+    @State private var uploading = false
+    @State private var previewURL: URL?
     var body: some View {
         VStack(spacing:0) {
             ScrollViewReader { proxy in
@@ -219,9 +345,26 @@ struct ChatView: View {
                                     if chat.kind == "group" && message.sender_id != store.me?.id {
                                         Text(message.sender_name).font(.caption.bold()).foregroundStyle(muted)
                                     }
-                                    Text(message.deleted != 0 ? "Сообщение удалено" : message.body)
-                                        .foregroundStyle(message.deleted != 0 ? muted : white)
-                                        .font(.body)
+                                    if message.deleted == 0, let file = message.attachment {
+                                        Button {
+                                            Task { previewURL = await store.download(file) }
+                                        } label: {
+                                            VStack(alignment:.leading,spacing:7) {
+                                                if file.content_type.hasPrefix("image/") {
+                                                    PrivateImage(path:"/attachments/\(file.id)", width:225)
+                                                } else {
+                                                    Label(file.filename,systemImage:"doc.fill")
+                                                        .lineLimit(2)
+                                                    Text(ByteCountFormatter.string(fromByteCount:Int64(file.byte_size),countStyle:.file))
+                                                        .font(.caption).foregroundStyle(muted)
+                                                }
+                                            }
+                                        }.buttonStyle(.plain)
+                                    }
+                                    if message.deleted != 0 || !message.body.isEmpty {
+                                        Text(message.deleted != 0 ? "Сообщение удалено" : message.body)
+                                            .foregroundStyle(message.deleted != 0 ? muted : white).font(.body)
+                                    }
                                     HStack(spacing:6) {
                                         if message.edited_at != nil { Text("изм.") }
                                         Text(message.created_at.count >= 16 ? String(message.created_at.suffix(from:message.created_at.index(message.created_at.startIndex,offsetBy:11)).prefix(5)) : "")
@@ -265,6 +408,17 @@ struct ChatView: View {
                 }.padding(.horizontal,16).padding(.top,8)
             }
             HStack(alignment:.bottom,spacing:10) {
+                Menu {
+                    PhotosPicker(selection:$chosenPhoto,matching:.images) {
+                        Label("Фото",systemImage:"photo")
+                    }
+                    Button { choosingFile=true } label: {
+                        Label("Файл",systemImage:"doc")
+                    }
+                } label: {
+                    Image(systemName:"plus.circle.fill")
+                        .font(.system(size:28)).foregroundStyle(.white)
+                }.disabled(uploading)
                 TextField("Сообщение",text:$draft,axis:.vertical)
                     .lineLimit(1...5).padding(12)
                     .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:18))
@@ -277,6 +431,30 @@ struct ChatView: View {
         .background(ink)
         .navigationTitle(chat.title)
         .navigationBarTitleDisplayMode(.inline)
+        .fileImporter(isPresented:$choosingFile,allowedContentTypes:[.image,.pdf,.plainText,.archive,.data]) { result in
+            guard case .success(let url) = result else { return }
+            Task {
+                let allowed = url.startAccessingSecurityScopedResource()
+                defer { if allowed { url.stopAccessingSecurityScopedResource() } }
+                guard let data=try? Data(contentsOf:url) else { store.alertText="Не удалось прочитать файл"; return }
+                uploading=true
+                _ = await store.upload(chatID:chat.id,data:data,filename:url.lastPathComponent,mime:url.pathExtension.lowercased()=="pdf" ? "application/pdf" : "application/octet-stream")
+                uploading=false
+                await reload()
+            }
+        }
+        .onChange(of:chosenPhoto) { _,photo in
+            Task {
+                guard let data = try? await photo?.loadTransferable(type:Data.self),
+                      let image = UIImage(data:data),let jpeg=image.jpegData(compressionQuality:0.85) else { return }
+                uploading=true
+                _ = await store.upload(chatID:chat.id,data:jpeg,filename:"photo.jpg",mime:"image/jpeg")
+                uploading=false
+                chosenPhoto=nil
+                await reload()
+            }
+        }
+        .quickLookPreview($previewURL)
         .task { await reload() }
         .onChange(of:store.eventVersion) { _,_ in Task { await reload() } }
         .alert("Изменить сообщение",isPresented:Binding(get:{editing != nil},set:{if !$0 { editing=nil }})) {
@@ -317,9 +495,29 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Профиль") {
-                    Text("@\(store.me?.username ?? "")").foregroundStyle(muted)
-                    TextField("Отображаемое имя",text:$displayName)
-                    Button("Сохранить имя") { Task { await store.saveProfile(displayName) } }
+                    NavigationLink { MyProfileView() } label: {
+                        HStack(spacing:14) {
+                            ProfileAvatar(user:store.me,fallback:store.me?.display_name ?? "N",size:58)
+                            VStack(alignment:.leading) {
+                                Text(store.me?.display_name ?? "Профиль").font(.headline)
+                                Text("@\(store.me?.username ?? "")").foregroundStyle(muted).font(.caption)
+                            }
+                            Spacer()
+                        }.padding(.vertical,6)
+                    }
+                }
+                Section("Телефон") {
+                    if let phone = store.phoneStatus?.phone {
+                        Text("Привязан: \(phone)")
+                        Toggle("Находить меня по номеру", isOn: Binding(
+                            get: { store.phoneStatus?.discoverable ?? false },
+                            set: { value in Task { await store.setDiscoverable(value) } }
+                        ))
+                    } else {
+                        Text("Привяжи номер, чтобы входить по нему и текущему паролю, сохранив переписки. Номер не подтверждается через SMS.")
+                            .font(.caption).foregroundStyle(muted)
+                        NavigationLink("Привязать номер") { PhoneEntryView(linking: true) }
+                    }
                 }
                 Section("Сервер") {
                     TextField("https://chat.nightwell.fun",text:$server)
@@ -333,5 +531,6 @@ struct SettingsView: View {
                 .navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.topBarTrailing) { Button("Готово") { dismiss() } } }
         }.onAppear { server=store.serverURL; displayName=store.me?.display_name ?? "" }
+            .task { await store.loadPhoneStatus() }
     }
 }

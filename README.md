@@ -15,12 +15,18 @@ Independent **black-and-white** messenger by Nightwell. Native iPhone UI (SwiftU
 
 ## Start backend on Windows (NO Docker)
 
-1. Install **Python 3.10 or newer** from python.org (with the Windows Python Launcher `py` or add Python to PATH).
+1. Install **Python 3.12 (recommended)** from [python.org](https://www.python.org/downloads/). Supported by this Windows launcher: Python 3.10–3.13. Do not use Python 3.15 for this initial Windows build.
 2. Download or clone this repository and double-click **`Start_Nightwell_Chat.bat`**.
-3. The launcher automatically creates a private `.venv`, installs Python dependencies and starts the server.
+3. The launcher automatically selects a supported Python interpreter, creates a private `.venv`, installs Python dependencies and starts the server. If an old `.venv` was created with Python 3.14/3.15, it is replaced automatically. **Your `.env` and `data` directory are not deleted.**
 4. The first run also creates `.env` with a strong random `SECRET_KEY` and the `data/nightwell_chat.db` SQLite database. **Keep `.env` secret and back up the `data` directory.** Never delete `.env` when upgrading or existing sessions will stop working.
 5. Open **http://127.0.0.1:8009/health** in your browser. It should return `{"ok":true,"service":"nightwell-chat"}`.
 6. To stop the local server, use **`Stop_Nightwell_Chat.bat`**, or press Ctrl+C in the server window.
+
+### Fixing `Failed building wheel for pyyaml` on Windows
+
+Older versions of the launcher used `py -3`, which picked the newest installed Python. On machines with Python 3.15 this could cause a failed PyYAML build asking for Microsoft Visual C++ 14.0. The updated launcher avoids this by selecting Python 3.12 if installed, otherwise 3.13/3.11/3.10. It replaces only an incompatible `.venv` and installs a smaller Uvicorn dependency set without PyYAML. The app still supports WebSockets.
+
+If you have **only Python 3.15**, install Python 3.12 first. One Windows option is `winget install -e --id Python.Python.3.12` or use the [official download](https://www.python.org/downloads/). Then close the old terminal, extract the new project ZIP over the old files (without deleting `.env` or `data`), and run `Start_Nightwell_Chat.bat`. If you cannot replace the whole folder, copy `Start_Nightwell_Chat.bat` and `server/requirements.txt` from the new archive. You do **not** need Visual Studio Build Tools for this fix.
 
 The application listens **only on 127.0.0.1:8009**. You do **not** need to open this port in your router. To make iPhone clients connect over the internet, point `chat.nightwell.fun` at your server and add the following to your existing Caddy configuration:
 

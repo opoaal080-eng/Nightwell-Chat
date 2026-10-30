@@ -6,16 +6,22 @@ import os
 import re
 import secrets
 import sqlite3
+import time
+import io
+import uuid
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
 import jwt
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Query
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Query, Request, UploadFile, File, Form
 from pydantic import BaseModel, Field
+from fastapi.responses import FileResponse, HTMLResponse
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 DB_PATH = Path(os.getenv("DB_PATH", "./nightwell_chat.db"))
+MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(DB_PATH.parent / "media"))).resolve()
 SECRET = os.getenv("SECRET_KEY", "")
 if len(SECRET) < 32 or SECRET.startswith("REPLACE_WITH_"):
     raise RuntimeError("Set SECRET_KEY to a random string of at least 32 characters")
@@ -54,13 +60,60 @@ def setup():
           user_id INTEGER NOT NULL REFERENCES users(id), emoji TEXT NOT NULL,
           PRIMARY KEY(message_id,user_id,emoji));
         """)
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS calls (
+            id TEXT PRIMARY KEY,
+            chat_id INTEGER NOT NULL REFERENCES chats(id),
+            caller_id INTEGER NOT NULL REFERENCES users(id),
+            callee_id INTEGER NOT NULL REFERENCES users(id),
+            status TEXT NOT NULL CHECK(status IN ('ringing','active','ended','declined')),
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_calls_to ON calls(callee_id,status,expires_at);
+        CREATE INDEX IF NOT EXISTS idx_calls_from ON calls(caller_id,created_at);
+        """)
+        # Media schema migration is additive: existing messages and user accounts stay intact.
+        user_cols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
+        if "avatar_key" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN avatar_key TEXT")
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS attachments (
+            id INTEGER PRIMARY KEY,
+            message_id INTEGER NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+            filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            byte_size INTEGER NOT NULL,
+            storage_key TEXT NOT NULL UNIQUE
+        );
+        """)
+        # Backwards-compatible migration: keep all old accounts, chats and messages.
+        cols={r[1] for r in c.execute("PRAGMA table_info(users)")}
+        if "phone" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+        if "phone_discoverable" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN phone_discoverable INTEGER NOT NULL DEFAULT 0")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL")
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS phone_auth_attempts(
+            id INTEGER PRIMARY KEY, phone_hash TEXT NOT NULL, ip_hash TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_phone_auth_number ON phone_auth_attempts(phone_hash,created_at);
+        CREATE INDEX IF NOT EXISTS idx_phone_auth_ip ON phone_auth_attempts(ip_hash,created_at);
+        CREATE TABLE IF NOT EXISTS phone_search_log(
+            id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_phone_search_user ON phone_search_log(user_id,created_at);
+        """)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup()
     yield
 
-app = FastAPI(title="Nightwell Chat", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Nightwell Chat", version="0.5.0", lifespan=lifespan)
 
 class Credentials(BaseModel):
     username: str = Field(min_length=3,max_length=24)
@@ -111,7 +164,7 @@ def identity(raw: str):
         data = jwt.decode(raw,SECRET,algorithms=["HS256"])
         uid = int(data["sub"])
         with db() as c:
-            user = c.execute("SELECT id,username,display_name FROM users WHERE id=?",(uid,)).fetchone()
+            user = c.execute("SELECT id,username,display_name,avatar_key FROM users WHERE id=?",(uid,)).fetchone()
         if user: return dict(user)
     except (jwt.PyJWTError,ValueError,KeyError):
         pass
@@ -128,7 +181,8 @@ def member(c, chat_id, uid):
     return row["role"]
 
 def user_public(row):
-    return {k:row[k] for k in ("id","username","display_name")}
+    return {**{k:row[k] for k in ("id","username","display_name")},
+            "has_avatar": bool(row["avatar_key"]) if "avatar_key" in row.keys() else False}
 
 # Live socket connections are scoped to one process. Use Redis pub/sub when scaling to multiple workers.
 clients: dict[int,set[WebSocket]] = {}
@@ -158,7 +212,7 @@ def register(data: Registration):
         except sqlite3.IntegrityError:
             raise HTTPException(409,"Username is taken")
         uid=cur.lastrowid
-    return {"access_token":token(uid),"token_type":"bearer","user":{"id":uid,"username":username,"display_name":data.display_name.strip()}}
+    return {"access_token":token(uid),"token_type":"bearer","user":{"id":uid,"username":username,"display_name":data.display_name.strip(),"has_avatar":False}}
 
 @app.post("/auth/login")
 def login(data: Credentials):
@@ -178,16 +232,288 @@ def update_me(body: Profile,user=Depends(current)):
         c.execute("UPDATE users SET display_name=? WHERE id=?",(body.display_name.strip(),user["id"]))
     return {**user,"display_name":body.display_name.strip()}
 
+# Phone/password login and contact discovery. A format check is NOT proof
+# of SIM ownership. No SMS, calls or third-party lookup are performed.
+class PhonePassword(BaseModel):
+    phone: str = Field(min_length=8, max_length=35)
+    password: str = Field(min_length=8, max_length=256)
+
+class PhoneRegistration(PhonePassword):
+    display_name: str = Field(min_length=1, max_length=60)
+    discoverable: bool = False
+
+class PhoneLink(PhonePassword):
+    discoverable: bool = False
+
+class PhoneVisibility(BaseModel):
+    discoverable: bool
+
+
+def normalize_phone(value: str) -> str:
+    # International E.164 syntax and length check. Does not verify ownership,
+    # number allocation, carrier, or ability to receive SMS/calls.
+    digits=re.sub(r"[\s()\-]", "", value.strip())
+    if re.fullmatch(r"9\d{9}",digits):
+        digits="+7"+digits
+    elif re.fullmatch(r"8\d{10}",digits):
+        digits="+7"+digits[1:]
+    elif re.fullmatch(r"7\d{10}",digits):
+        digits="+"+digits
+    if not re.fullmatch(r"\+[1-9]\d{7,14}",digits):
+        raise HTTPException(422,"Неверный формат. Введи номер с кодом страны, например +79991234567")
+    if digits.startswith("+7") and (len(digits)!=12 or digits[2] not in "3489"):
+        raise HTTPException(422,"Неверный формат российского номера")
+    return digits
+
+
+def _hash_log(value:str) -> str:
+    return hmac.new(SECRET.encode(),value.encode(),hashlib.sha256).hexdigest()
+
+
+def _source(request:Request) -> str:
+    ip=request.client.host if request.client else "unknown"
+    if ip in ("127.0.0.1", "::1"):
+        forwarded=request.headers.get("x-forwarded-for", "").split(",",1)[0].strip()
+        if forwarded: ip=forwarded[:80]
+    return ip
+
+
+def auth_limit(c,request:Request,phone:str) -> None:
+    # Persist login throttling across workers/restarts. Store only HMACs of
+    # numbers and IPs, no plain text phone/IP in rate-limit records.
+    now=int(time.time())
+    number_hash=_hash_log(phone)
+    ip_hash=_hash_log(_source(request))
+    c.execute("BEGIN IMMEDIATE")
+    c.execute("DELETE FROM phone_auth_attempts WHERE created_at<?",(now-86400,))
+    attempts=c.execute("SELECT COUNT(*) FROM phone_auth_attempts WHERE phone_hash=? AND created_at>?",
+        (number_hash,now-900)).fetchone()[0]
+    ip_attempts=c.execute("SELECT COUNT(*) FROM phone_auth_attempts WHERE ip_hash=? AND created_at>?",
+        (ip_hash,now-900)).fetchone()[0]
+    if attempts>=8 or ip_attempts>=60:
+        raise HTTPException(429,"Слишком много попыток. Повтори через 15 минут")
+    c.execute("INSERT INTO phone_auth_attempts(phone_hash,ip_hash,created_at) VALUES(?,?,?)",
+        (number_hash,ip_hash,now))
+
+
+@app.post("/auth/phone/register",status_code=201)
+def register_by_phone(data:PhoneRegistration,request:Request):
+    phone=normalize_phone(data.phone)
+    name=data.display_name.strip()
+    if not name: raise HTTPException(422,"Имя не может быть пустым")
+    with db() as c:
+        auth_limit(c,request,phone)
+        try:
+            # Internal usernames are random and never based on phone numbers.
+            uid=c.execute("INSERT INTO users(username,display_name,password_hash,phone,phone_discoverable) VALUES(?,?,?,?,?)",
+                ("nw_"+secrets.token_hex(10),name,hash_pw(data.password),phone,int(data.discoverable))).lastrowid
+        except sqlite3.IntegrityError:
+            raise HTTPException(409,"Номер уже зарегистрирован")
+        user=c.execute("SELECT id,username,display_name,avatar_key FROM users WHERE id=?",(uid,)).fetchone()
+    return {"access_token":token(uid),"token_type":"bearer","user":user_public(user)}
+
+
+@app.post("/auth/phone/login")
+def login_by_phone(data:PhonePassword,request:Request):
+    phone=normalize_phone(data.phone)
+    with db() as c:
+        auth_limit(c,request,phone)
+        user=c.execute("SELECT id,username,display_name,password_hash,avatar_key FROM users WHERE phone=?",(phone,)).fetchone()
+    # Generic response, even when the number is not registered.
+    if not user or not verify_pw(data.password,user["password_hash"]):
+        raise HTTPException(401,"Неверный номер или пароль")
+    return {"access_token":token(user["id"]),"token_type":"bearer","user":user_public(user)}
+
+
+@app.post("/me/phone/link")
+def link_phone(data:PhoneLink,user=Depends(current)):
+    phone=normalize_phone(data.phone)
+    with db() as c:
+        old=c.execute("SELECT password_hash FROM users WHERE id=?",(user["id"],)).fetchone()
+        if not old or not verify_pw(data.password,old["password_hash"]):
+            raise HTTPException(401,"Неверный пароль аккаунта")
+        try:
+            c.execute("UPDATE users SET phone=?,phone_discoverable=? WHERE id=?",
+                (phone,int(data.discoverable),user["id"]))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409,"Номер уже зарегистрирован в другом аккаунте")
+    return {"ok":True}
+
+
+@app.get("/me/phone")
+def my_phone(user=Depends(current)):
+    with db() as c:
+        row=c.execute("SELECT phone,phone_discoverable FROM users WHERE id=?",(user["id"],)).fetchone()
+    return {"phone":row["phone"],"discoverable":bool(row["phone_discoverable"])}
+
+
+@app.patch("/me/phone/visibility")
+def change_phone_visibility(data:PhoneVisibility,user=Depends(current)):
+    with db() as c:
+        c.execute("UPDATE users SET phone_discoverable=? WHERE id=?",(int(data.discoverable),user["id"]))
+    return {"ok":True}
+
+
+@app.get("/users/by-phone")
+def search_by_phone(phone:str=Query(min_length=8,max_length=35),user=Depends(current)):
+    number=normalize_phone(phone)
+    now=int(time.time())
+    with db() as c:
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("DELETE FROM phone_search_log WHERE created_at<?",(now-86400,))
+        minute=c.execute("SELECT COUNT(*) FROM phone_search_log WHERE user_id=? AND created_at>?",(user["id"],now-60)).fetchone()[0]
+        day=c.execute("SELECT COUNT(*) FROM phone_search_log WHERE user_id=?",(user["id"],)).fetchone()[0]
+        if minute>=10 or day>=100:
+            raise HTTPException(429,"Слишком много поисковых запросов")
+        c.execute("INSERT INTO phone_search_log(user_id,created_at) VALUES(?,?)",(user["id"],now))
+        found=c.execute("SELECT id,username,display_name,avatar_key FROM users WHERE phone=? AND phone_discoverable=1 AND id<>?",(number,user["id"])).fetchone()
+        return user_public(found) if found else None
+
+
+# Attachments are stored outside the web root and require bearer auth on every read.
+MAX_FILE_SIZE = 15 * 1024 * 1024
+MAX_AVATAR_SIZE = 6 * 1024 * 1024
+ALLOWED_SUFFIXES = {".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png",
+    ".webp":"image/webp", ".gif":"image/gif", ".pdf":"application/pdf",
+    ".txt":"text/plain", ".zip":"application/zip", ".docx":"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+
+def attachment_view(c, mid: int):
+    row = c.execute("SELECT id,filename,content_type,byte_size FROM attachments WHERE message_id=?", (mid,)).fetchone()
+    return dict(row) if row else None
+
+async def limited_read(file: UploadFile, max_bytes: int) -> bytes:
+    data = await file.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise HTTPException(413, "File is too large")
+    if not data:
+        raise HTTPException(422, "Empty file")
+    return data
+
+def persist_bytes(subdir: str, content: bytes, suffix: str) -> str:
+    key = f"{subdir}/{uuid.uuid4().hex}{suffix}"
+    location = MEDIA_DIR / key
+    location.parent.mkdir(parents=True, exist_ok=True)
+    with location.open("xb") as handle:
+        handle.write(content)
+    return key
+
+def clean_filename(name: str) -> str:
+    name = name.replace("\\", "/").split("/")[-1].strip().replace("\x00", "")
+    return name[:120] if name else "file"
+
+def verified_media(data: bytes, suffix: str) -> tuple[bytes, str, str]:
+    # All uploaded images are re-encoded, removing EXIF/GPS and active content.
+    if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        try:
+            with Image.open(io.BytesIO(data)) as original:
+                original.verify()
+            with Image.open(io.BytesIO(data)) as original:
+                if original.width * original.height > 24_000_000: raise HTTPException(413, "Image too large")
+                img = ImageOps.exif_transpose(original)
+                img.thumbnail((2400, 2400))
+                output = io.BytesIO()
+                img.convert("RGB").save(output, format="JPEG", quality=85, optimize=True)
+                return output.getvalue(), ".jpg", "image/jpeg"
+        except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+            raise HTTPException(422, "Invalid image")
+    if suffix == ".pdf" and not data.startswith(b"%PDF-"):
+        raise HTTPException(422, "Invalid PDF")
+    if suffix in {".zip", ".docx", ".xlsx"} and not data.startswith(b"PK\x03\x04"):
+        raise HTTPException(422, "Invalid ZIP/document")
+    if suffix == ".txt":
+        try: data.decode("utf-8")
+        except UnicodeError: raise HTTPException(422, "Text file must be UTF-8")
+    return data, suffix, ALLOWED_SUFFIXES[suffix]
+
+@app.post("/me/avatar")
+async def set_avatar(file: UploadFile = File(...), user=Depends(current)):
+    raw = await limited_read(file, MAX_AVATAR_SIZE)
+    try:
+        with Image.open(io.BytesIO(raw)) as original:
+            original.verify()
+        with Image.open(io.BytesIO(raw)) as original:
+            if original.width * original.height > 24_000_000: raise HTTPException(413, "Image too large")
+            avatar = ImageOps.exif_transpose(original).convert("RGB")
+            avatar.thumbnail((512,512))
+            encoded = io.BytesIO()
+            avatar.save(encoded, "JPEG", quality=85, optimize=True)
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+        raise HTTPException(422,"Invalid image")
+    key = persist_bytes("avatars", encoded.getvalue(), ".jpg")
+    with db() as c:
+        old = c.execute("SELECT avatar_key FROM users WHERE id=?", (user["id"],)).fetchone()
+        c.execute("UPDATE users SET avatar_key=? WHERE id=?", (key,user["id"]))
+    if old and old[0]: (MEDIA_DIR / old[0]).unlink(missing_ok=True)
+    return {"ok": True}
+
+@app.delete("/me/avatar")
+def delete_avatar(user=Depends(current)):
+    with db() as c:
+        old = c.execute("SELECT avatar_key FROM users WHERE id=?", (user["id"],)).fetchone()
+        c.execute("UPDATE users SET avatar_key=NULL WHERE id=?",(user["id"],))
+    if old and old[0]: (MEDIA_DIR / old[0]).unlink(missing_ok=True)
+    return {"ok":True}
+
+@app.get("/users/{user_id}/avatar")
+def get_avatar(user_id:int, user=Depends(current)):
+    with db() as c:
+        row = c.execute("SELECT avatar_key FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row or not row[0]: raise HTTPException(404,"Avatar not found")
+    file = MEDIA_DIR / row[0]
+    if not file.is_file(): raise HTTPException(404,"Avatar file missing")
+    return FileResponse(file,media_type="image/jpeg",headers={"Cache-Control":"private, no-store", "X-Content-Type-Options":"nosniff"})
+
+@app.post("/chats/{chat_id}/attachments",status_code=201)
+async def send_attachment(chat_id: int, file: UploadFile = File(...), caption: str = Form(""), user=Depends(current)):
+    with db() as c: member(c,chat_id,user["id"])
+    suffix = Path(clean_filename(file.filename or "file")).suffix.lower()
+    if suffix not in ALLOWED_SUFFIXES: raise HTTPException(415,"Unsupported file type")
+    if len(caption) > 4000: raise HTTPException(422,"Caption too long")
+    raw = await limited_read(file, MAX_FILE_SIZE)
+    content, suffix, mime = verified_media(raw, suffix)
+    name = clean_filename(file.filename or "file")
+    if mime == "image/jpeg": name = Path(name).stem[:110] + ".jpg"
+    key = persist_bytes("attachments", content, suffix)
+    try:
+        with db() as c:
+            member(c,chat_id,user["id"])
+            mid = c.execute("INSERT INTO messages(chat_id,sender_id,body) VALUES(?,?,?)",
+                (chat_id,user["id"],caption.strip())).lastrowid
+            c.execute("INSERT INTO attachments(message_id,filename,content_type,byte_size,storage_key) VALUES(?,?,?,?,?)",
+                (mid,name,mime,len(content),key))
+            result = message_view(c,c.execute("SELECT * FROM messages WHERE id=?",(mid,)).fetchone())
+            ids = members(c,chat_id)
+    except Exception:
+        (MEDIA_DIR / key).unlink(missing_ok=True)
+        raise
+    await notify(ids,{"type":"message","chat_id":chat_id,"message":result})
+    return result
+
+@app.get("/attachments/{attachment_id}")
+def get_attachment(attachment_id:int, user=Depends(current)):
+    with db() as c:
+        row = c.execute("""SELECT a.*,m.chat_id,m.deleted FROM attachments a
+          JOIN messages m ON m.id=a.message_id WHERE a.id=?""",(attachment_id,)).fetchone()
+        if not row or row["deleted"]: raise HTTPException(404,"File not found")
+        member(c,row["chat_id"],user["id"])
+    path = MEDIA_DIR / row["storage_key"]
+    if not path.is_file(): raise HTTPException(404,"File missing")
+    # Always a safe filename; authorization already checked above.
+    return FileResponse(path,media_type=row["content_type"],filename=row["filename"],
+        content_disposition_type="inline" if row["content_type"].startswith("image/") else "attachment",
+        headers={"Cache-Control":"private, no-store", "X-Content-Type-Options":"nosniff"})
+
 @app.get("/users")
 def search_users(q: str = Query(min_length=1,max_length=50),user=Depends(current)):
     with db() as c:
-        rows=c.execute("SELECT id,username,display_name FROM users WHERE id<>? AND (username LIKE ? OR display_name LIKE ?) ORDER BY username LIMIT 30",
+        rows=c.execute("SELECT id,username,display_name,avatar_key FROM users WHERE id<>? AND (username LIKE ? OR display_name LIKE ?) ORDER BY username LIMIT 30",
           (user["id"],"%"+q+"%","%"+q+"%")).fetchall()
-    return [dict(x) for x in rows]
+    return [user_public(x) for x in rows]
 
 def chat_view(c, row, uid):
     cid=row["id"]
-    other=c.execute("SELECT u.id,u.username,u.display_name FROM users u JOIN members m ON u.id=m.user_id WHERE m.chat_id=? AND m.user_id<>? LIMIT 1",(cid,uid)).fetchone() if row["kind"]=="direct" else None
+    other=c.execute("SELECT u.id,u.username,u.display_name,u.avatar_key FROM users u JOIN members m ON u.id=m.user_id WHERE m.chat_id=? AND m.user_id<>? LIMIT 1",(cid,uid)).fetchone() if row["kind"]=="direct" else None
     last=c.execute("SELECT id,body,sender_id,created_at FROM messages WHERE chat_id=? ORDER BY id DESC LIMIT 1",(cid,)).fetchone()
     read=c.execute("SELECT last_read_id FROM members WHERE chat_id=? AND user_id=?",(cid,uid)).fetchone()
     unread=c.execute("SELECT COUNT(*) FROM messages WHERE chat_id=? AND id>? AND sender_id<>?",(cid,read[0] if read else 0,uid)).fetchone()[0]
@@ -245,7 +571,7 @@ async def add_member(chat_id:int,body:MemberCreate,user=Depends(current)):
 def message_view(c, row):
     sender=c.execute("SELECT username,display_name FROM users WHERE id=?",(row["sender_id"],)).fetchone()
     reactions=c.execute("SELECT emoji,COUNT(*) AS count FROM reactions WHERE message_id=? GROUP BY emoji",(row["id"],)).fetchall()
-    return {**dict(row),"body":"" if row["deleted"] else row["body"],"sender_name":sender["display_name"],"reactions":[dict(x) for x in reactions]}
+    return {**dict(row),"body":"" if row["deleted"] else row["body"],"sender_name":sender["display_name"],"attachment": attachment_view(c,row["id"]) if not row["deleted"] else None,"reactions":[dict(x) for x in reactions]}
 
 @app.get("/chats/{chat_id}/messages")
 def get_messages(chat_id:int,before:int|None=None,limit:int=Query(50,ge=1,le=100),user=Depends(current)):
@@ -321,6 +647,168 @@ async def mark_read(chat_id:int,body:ReadUpdate,user=Depends(current)):
         ids=members(c,chat_id)
     await notify(ids,{"type":"read","chat_id":chat_id,"user_id":user["id"],"message_id":safe_id})
     return {"ok":True}
+
+
+# Foreground one-to-one voice calls: DB holds call state; WebSocket only relays
+# WebRTC offer/answer/ICE metadata. Audio itself travels peer-to-peer (or TURN).
+CALL_RING_SECONDS = 90
+CALL_MAX_SECONDS = 3600
+call_peers: dict[str, dict[int, WebSocket]] = {}
+
+def call_public(row):
+    return {"id": row["id"], "chat_id": row["chat_id"], "caller_id": row["caller_id"],
+            "callee_id": row["callee_id"], "status": row["status"], "created_at": row["created_at"]}
+
+def call_row(c, cid, uid):
+    row = c.execute("SELECT * FROM calls WHERE id=?", (cid,)).fetchone()
+    if not row or uid not in (row["caller_id"], row["callee_id"]):
+        raise HTTPException(404, "Call not found")
+    if row["expires_at"] < int(time.time()) and row["status"] in ("active", "ringing"):
+        c.execute("UPDATE calls SET status='ended' WHERE id=?", (cid,))
+        raise HTTPException(410, "Call expired")
+    return row
+
+def call_ticket(cid, uid):
+    return jwt.encode({"sub": str(uid), "cid": cid, "scope": "voice-call",
+                       "exp": datetime.now(timezone.utc) + timedelta(minutes=80)}, SECRET, algorithm="HS256")
+
+def call_target(cid, uid):
+    # Returned token goes in the URL fragment, never as a query parameter to the HTML route.
+    return {"ticket": call_ticket(cid, uid), "path": f"/calls/{cid}/page"}
+
+@app.post("/calls/direct/{other_id}", status_code=201)
+async def create_voice_call(other_id: int, user=Depends(current)):
+    if other_id == user["id"]: raise HTTPException(422, "Cannot call yourself")
+    now = int(time.time())
+    with db() as c:
+        person = c.execute("SELECT id FROM users WHERE id=?", (other_id,)).fetchone()
+        if not person: raise HTTPException(404, "User not found")
+        recent = c.execute("SELECT COUNT(*) FROM calls WHERE caller_id=? AND created_at>?",
+                           (user["id"], now-60)).fetchone()[0]
+        if recent >= 3: raise HTTPException(429, "Too many calls. Try later")
+        a, b = sorted([user["id"], other_id])
+        pair = c.execute("SELECT chat_id FROM direct_pairs WHERE a=? AND b=?", (a,b)).fetchone()
+        if not pair: raise HTTPException(404, "Start a direct chat before calling")
+        ongoing = c.execute("SELECT id FROM calls WHERE (caller_id IN (?,?) OR callee_id IN (?,?)) AND status IN ('ringing','active') AND expires_at > ?",
+            (user["id"], other_id,user["id"],other_id,now)).fetchone()
+        if ongoing: raise HTTPException(409, "Another call is in progress")
+        cid = uuid.uuid4().hex
+        c.execute("INSERT INTO calls VALUES (?,?,?,?,?,?,?)",
+                  (cid,pair["chat_id"],user["id"],other_id,"ringing",now,now+CALL_RING_SECONDS))
+    await notify([other_id], {"type":"incoming_call", "call_id":cid, "from_id":user["id"]})
+    return {**call_public({"id":cid,"chat_id":pair["chat_id"],"caller_id":user["id"],
+                           "callee_id":other_id,"status":"ringing","created_at":now}),**call_target(cid,user["id"])}
+
+@app.get("/calls/pending")
+def pending_calls(user=Depends(current)):
+    now = int(time.time())
+    with db() as c:
+        c.execute("UPDATE calls SET status='ended' WHERE expires_at < ? AND status IN ('ringing','active')", (now,))
+        rows = c.execute("SELECT * FROM calls WHERE callee_id=? AND status='ringing' AND expires_at>=? ORDER BY created_at DESC LIMIT 10",(user["id"],now)).fetchall()
+        users = {r["caller_id"]:c.execute("SELECT display_name FROM users WHERE id=?",(r["caller_id"],)).fetchone()[0] for r in rows}
+        return [{**call_public(row),"caller_name":users[row["caller_id"]]} for row in rows]
+
+@app.post("/calls/{cid}/accept")
+async def accept_call(cid: str, user=Depends(current)):
+    with db() as c:
+        row = call_row(c,cid,user["id"])
+        if row["callee_id"] != user["id"]: raise HTTPException(403, "Only recipient can accept")
+        if row["status"] != "ringing": raise HTTPException(409, "Call is not ringing")
+        c.execute("UPDATE calls SET status='active',expires_at=? WHERE id=?",(int(time.time())+CALL_MAX_SECONDS,cid))
+        caller=row["caller_id"]
+    await notify([caller],{"type":"call_accepted","call_id":cid})
+    return {"ok":True,**call_target(cid,user["id"])}
+
+@app.post("/calls/{cid}/decline")
+async def decline_call(cid: str, user=Depends(current)):
+    with db() as c:
+        row=call_row(c,cid,user["id"])
+        if row["callee_id"] != user["id"]: raise HTTPException(403, "Only recipient can decline")
+        if row["status"] != "ringing": raise HTTPException(409,"Call is not ringing")
+        c.execute("UPDATE calls SET status='declined' WHERE id=?",(cid,))
+        other=row["caller_id"]
+    await notify([other],{"type":"call_ended","call_id":cid})
+    for peer in list(call_peers.get(cid,{}).values()):
+        try: await peer.send_json({"type":"ended"})
+        except Exception: pass
+    return {"ok":True}
+
+@app.post("/calls/{cid}/end")
+async def end_call(cid: str,user=Depends(current)):
+    with db() as c:
+        row=call_row(c,cid,user["id"])
+        if row["status"] not in ("ringing","active"): return {"ok":True}
+        c.execute("UPDATE calls SET status='ended' WHERE id=?",(cid,))
+        recipients=[row["caller_id"],row["callee_id"]]
+    await notify(recipients,{"type":"call_ended","call_id":cid})
+    for peer in list(call_peers.get(cid,{}).values()):
+        try: await peer.send_json({"type":"ended"})
+        except Exception: pass
+    return {"ok":True}
+
+@app.get("/calls/{cid}/page",response_class=HTMLResponse)
+def call_page(cid: str):
+    if not re.fullmatch(r"[0-9a-f]{32}",cid): raise HTTPException(404,"Not found")
+    page = Path(__file__).with_name("call_page.html").read_text(encoding="utf-8")
+    response=HTMLResponse(page.replace("__CALL_ID__",cid), headers={
+        "Cache-Control":"no-store", "Referrer-Policy":"no-referrer",
+        "Permissions-Policy":"microphone=(self)",
+        "Content-Security-Policy":"default-src 'none'; connect-src 'self' wss:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; media-src blob:; img-src data:; base-uri 'none'; frame-ancestors 'none'"})
+    return response
+
+@app.websocket("/calls/{cid}/signal")
+async def call_signal(ws: WebSocket, cid: str, ticket: str = Query(default="")):
+    try:
+        decoded=jwt.decode(ticket,SECRET,algorithms=["HS256"])
+        if decoded.get("cid")!=cid or decoded.get("scope")!="voice-call": raise ValueError("bad scope")
+        uid=int(decoded["sub"])
+        with db() as c:
+            row=call_row(c,cid,uid)
+            if row["status"] not in ("ringing","active"): raise ValueError("closed")
+    except (jwt.PyJWTError,HTTPException,KeyError,ValueError):
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    room=call_peers.setdefault(cid,{})
+    if uid in room:
+        await ws.close(code=1008)
+        return
+    room[uid]=ws
+    try:
+        await ws.send_json({"type":"connected","role":"caller" if uid==row["caller_id"] else "callee"})
+        if len(room)==2 and row["status"]=="active":
+            for other in list(room.values()): await other.send_json({"type":"peer_ready"})
+        while True:
+            payload=await ws.receive_json()
+            if not isinstance(payload,dict): continue
+            kind=payload.get("type")
+            if kind=="hangup":
+                with db() as c:
+                    c.execute("UPDATE calls SET status='ended' WHERE id=?",(cid,))
+                for other in list(room.values()):
+                    await other.send_json({"type":"ended"})
+                await notify([row["caller_id"],row["callee_id"]],{"type":"call_ended","call_id":cid})
+                break
+            if kind not in ("offer","answer","ice"): continue
+            # Keep message type and payload small, never relay untrusted commands.
+            raw=payload.get("data")
+            if len(str(raw))>12000: continue
+            with db() as c:
+                state=c.execute("SELECT status,expires_at FROM calls WHERE id=?",(cid,)).fetchone()
+                if not state or state["status"]!="active" or state["expires_at"]<int(time.time()): break
+            target=room.get(row["callee_id"] if uid==row["caller_id"] else row["caller_id"])
+            if target:
+                try: await target.send_json({"type":kind,"data":raw})
+                except Exception: pass
+    except (WebSocketDisconnect,RuntimeError,ValueError):
+        pass
+    finally:
+        room.pop(uid,None)
+        if not room: call_peers.pop(cid,None)
+        else:
+            for other in list(room.values()):
+                try: await other.send_json({"type":"peer_left"})
+                except Exception: pass
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws:WebSocket):

@@ -1,0 +1,46 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="referrer" content="no-referrer"><title>Nightwell · Звонок</title><style>
+:root{color-scheme:dark}body{background:#050505;color:#fff;font:16px -apple-system,BlinkMacSystemFont,Arial,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center}.panel{width:min(90vw,440px);text-align:center;padding:26px;border:1px solid #333;border-radius:28px;background:#161616}h1{font-size:24px;font-weight:500;letter-spacing:.1em}p{color:#bbb;line-height:1.5}button{background:#fff;color:#000;border:0;border-radius:16px;padding:16px 20px;font-weight:700;font-size:16px;margin:10px;min-width:155px}button:disabled{opacity:.35}.danger{background:#363636;color:white}#state{min-height:45px}small{display:block;color:#888}audio{display:none}</style></head><body><main class="panel"><h1>NIGHTWELL CALL</h1><p id="state">Подготовка звонка</p><button id="start">Включить микрофон</button><button class="danger" id="hang">Завершить</button><small>WebRTC · Голос не записывается на сервере</small><audio id="remote" autoplay playsinline></audio></main>
+<script>
+'use strict';
+const cid='__CALL_ID__';const fragment=new URLSearchParams(location.hash.substring(1));const ticket=fragment.get('ticket')||'';
+const status=document.getElementById('state'),start=document.getElementById('start'),hang=document.getElementById('hang'),audio=document.getElementById('remote');
+let ws,peer,stream,role,ready=false,offered=false,finished=false;
+function text(msg){status.textContent=msg}
+function send(kind,data){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:kind,data:data||null}))}
+function closeCall(){finished=true;send('hangup');if(stream)stream.getTracks().forEach(t=>t.stop());if(peer)peer.close();if(ws)ws.close();start.disabled=true;text('Звонок завершён')}
+hang.onclick=closeCall;
+async function connect(){
+ if(!ticket){text('Нет разрешения на звонок');start.disabled=true;return}
+ ws=new WebSocket(location.origin.replace(/^http/,'ws')+'/calls/'+cid+'/signal?ticket='+encodeURIComponent(ticket));
+ ws.onclose=()=>{if(!finished)text('Связь прервана. Закрой окно и попробуй снова')};
+ ws.onerror=()=>text('Не удалось подключиться к звонку');
+ ws.onmessage=async e=>{
+  const msg=JSON.parse(e.data);
+  try {
+   if(msg.type==='connected'){role=msg.role;text(role==='caller'?'Ожидание ответа…':'Соединение…');return}
+   if(msg.type==='peer_ready'){ready=true;await negotiate();return}
+   if(msg.type==='peer_left'){ready=false;offered=false;text('Собеседник отключился');return}
+   if(msg.type==='ended'){closeCall();return}
+   if(msg.type==='offer'){await ensurePeer();await peer.setRemoteDescription(msg.data);let answer=await peer.createAnswer();await peer.setLocalDescription(answer);send('answer',peer.localDescription);return}
+   if(msg.type==='answer' && peer){await peer.setRemoteDescription(msg.data);return}
+   if(msg.type==='ice' && peer && msg.data){try{await peer.addIceCandidate(msg.data)}catch(err){console.warn('ICE not accepted',err)}}
+  } catch(err){text('Ошибка WebRTC: '+err.message)}
+ }
+}
+async function ensurePeer(){
+ if(peer)return;
+ const cfg={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
+ peer=new RTCPeerConnection(cfg);
+ peer.onicecandidate=e=>{if(e.candidate)send('ice',e.candidate.toJSON())};
+ peer.ontrack=e=>{audio.srcObject=e.streams[0];audio.play().catch(()=>text('Нажми экран, чтобы включить звук'))};
+ peer.onconnectionstatechange=()=>{if(peer.connectionState==='connected')text('Разговор');if(peer.connectionState==='failed')text('Не удалось установить соединение. Нужен TURN-сервер')};
+ if(stream)stream.getTracks().forEach(track=>peer.addTrack(track,stream));
+}
+async function negotiate(){if(finished||!stream||!ready)return;await ensurePeer();if(role==='caller'&&!offered){offered=true;const offer=await peer.createOffer();await peer.setLocalDescription(offer);send('offer',peer.localDescription)}else{text('Устанавливаем соединение…')}}
+start.onclick=async()=>{
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){text('Микрофон недоступен в этом браузере');return}
+ try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false});start.disabled=true;text('Микрофон активен. Соединяем…');await negotiate()}catch(err){text('Разреши доступ к микрофону: '+err.message)}
+};
+window.addEventListener('pagehide',()=>{if(stream)stream.getTracks().forEach(t=>t.stop());if(peer)peer.close()});
+connect();
+</script></body></html>

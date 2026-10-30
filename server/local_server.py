@@ -1,4 +1,4 @@
-"""Run Nightwell Chat on Windows or Linux without Docker (single worker)."""
+"""Run the Nightwell Chat API locally without Docker (single worker)."""
 from __future__ import annotations
 
 import os
@@ -15,8 +15,9 @@ PID_FILE = DATA_DIR / "nightwell_chat.pid"
 
 
 def load_environment() -> None:
-    """Generate a secret once, load .env, and select a local SQLite database."""
+    """Create a strong secret once and load a simple KEY=VALUE .env file."""
     if not ENV_FILE.exists():
+        # Exclusive creation avoids replacing an existing deployment secret.
         try:
             with ENV_FILE.open("x", encoding="utf-8") as env:
                 env.write("SECRET_KEY=" + secrets.token_hex(48) + "\n")
@@ -56,7 +57,8 @@ def stop_server() -> int:
         return 1
 
     if os.name == "nt":
-        # Check the command line so a reused PID cannot kill another program.
+        # Verify the process command line before terminating a PID that might
+        # have been reused since the server was started.
         ps = (
             f'$p = Get-CimInstance Win32_Process -Filter "ProcessId = {pid}"; '
             'if ($null -eq $p) { exit 3 }; '
@@ -70,20 +72,21 @@ def stop_server() -> int:
         if checked.returncode != 0:
             if checked.returncode == 3:
                 PID_FILE.unlink(missing_ok=True)
-                print("[Nightwell Chat] Already stopped; stale PID file removed.")
+                print("[Nightwell Chat] Server already stopped; removed stale PID file.")
             else:
-                print("[Nightwell Chat] Cannot verify server process; nothing stopped.")
+                print("[Nightwell Chat] Cannot verify the server process; nothing stopped.")
             return 1
         result = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False)
         if result.returncode != 0:
             return 1
     else:
         try:
+            # On Unix this is primarily for local development/tests.
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
-            print("[Nightwell Chat] Already stopped.")
+            print("[Nightwell Chat] Server already stopped.")
         except PermissionError:
-            print("[Nightwell Chat] Access denied; no process stopped.")
+            print("[Nightwell Chat] Access denied, no process was stopped.")
             return 1
 
     PID_FILE.unlink(missing_ok=True)
@@ -102,8 +105,8 @@ def run_server() -> int:
 
     os.chdir(ROOT / "server")
     PID_FILE.write_text(str(os.getpid()), encoding="ascii")
-    print("[Nightwell Chat] Health: http://127.0.0.1:8009/health", flush=True)
-    print("[Nightwell Chat] Public access: HTTPS via Caddy -> 127.0.0.1:8009", flush=True)
+    print("[Nightwell Chat] Local address: http://127.0.0.1:8009/health", flush=True)
+    print("[Nightwell Chat] Public access: use HTTPS via Caddy -> 127.0.0.1:8009", flush=True)
     try:
         uvicorn.run("app:app", host="127.0.0.1", port=8009,
                     workers=1, access_log=False)

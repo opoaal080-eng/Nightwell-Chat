@@ -1,0 +1,8 @@
+# EXAMPLE ONLY. Keep your existing Caddyfile and its existing Music settings.
+music.nightwell.fun {
+    reverse_proxy 127.0.0.1:8080
+}
+
+chat.nightwell.fun {
+    reverse_proxy 127.0.0.1:8009
+}

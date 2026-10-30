@@ -6,6 +6,7 @@ struct Person: Codable, Identifiable, Hashable {
     let id: Int
     let username: String
     let display_name: String
+    let has_avatar: Bool?
 }
 struct AuthResponse: Decodable {
     let access_token: String
@@ -31,6 +32,12 @@ struct Reaction: Decodable, Identifiable {
     let count: Int
     var id: String { emoji }
 }
+struct ChatAttachment: Decodable, Identifiable {
+    let id: Int
+    let filename: String
+    let content_type: String
+    let byte_size: Int
+}
 struct ChatMessage: Decodable, Identifiable {
     let id: Int
     let chat_id: Int
@@ -42,6 +49,7 @@ struct ChatMessage: Decodable, Identifiable {
     let edited_at: String?
     let deleted: Int
     let reactions: [Reaction]
+    let attachment: ChatAttachment?
 }
 struct EmptyResult: Decodable { let ok: Bool }
 struct ErrorResponse: Decodable { let detail: String? }
@@ -52,6 +60,13 @@ struct GroupPayload: Encodable { let title: String; let user_ids: [Int] }
 struct ReactionPayload: Encodable { let emoji: String }
 struct ReadPayload: Encodable { let message_id: Int }
 struct ProfilePayload: Encodable { let display_name: String }
+struct PhoneLoginBody: Encodable { let phone:String; let password:String }
+struct PhoneSignupBody: Encodable { let phone:String; let password:String; let display_name:String; let discoverable:Bool }
+struct PhoneLinkBody: Encodable { let phone:String; let password:String; let discoverable:Bool }
+struct PhoneVisibleBody: Encodable { let discoverable:Bool }
+struct PhoneStatus: Decodable { let phone:String?; let discoverable:Bool }
+struct VoiceCall: Decodable, Identifiable { let id:String; let ticket:String?; let path:String?; let caller_name:String? }
+
 
 private enum SecureToken {
     static let account = "nightwell.chat.session"
@@ -95,6 +110,7 @@ enum NetworkError: LocalizedError {
     @Published var eventVersion = 0
     @Published var alertText = ""
     @Published var loading = false
+    @Published var phoneStatus: PhoneStatus?
     @Published var serverURL = UserDefaults.standard.string(forKey: "nightwell.server") ?? "https://chat.nightwell.fun"
     private var socket: URLSessionWebSocketTask?
     private var socketJob: Task<Void, Never>?
@@ -152,6 +168,109 @@ enum NetworkError: LocalizedError {
             await reloadChats()
             startSocket()
         } catch { alertText = error.localizedDescription }
+    }
+
+
+    func loginByPhone(_ phone:String,password:String,name:String?=nil,discoverable:Bool=false) async {
+        loading = true; defer { loading = false }
+        do {
+            let result: AuthResponse
+            if let name {
+                result = try await request("/auth/phone/register",method:"POST",
+                    body:PhoneSignupBody(phone:phone,password:password,display_name:name,discoverable:discoverable),authenticated:false)
+            } else {
+                result = try await request("/auth/phone/login",method:"POST",
+                    body:PhoneLoginBody(phone:phone,password:password),authenticated:false)
+            }
+            token=result.access_token; SecureToken.save(token); me=result.user
+            await reloadChats(); startSocket()
+        } catch { alertText=error.localizedDescription }
+    }
+    func phoneState() async {
+        do { phoneStatus = try await request("/me/phone") }
+        catch { alertText = error.localizedDescription }
+    }
+    func attachPhone(_ phone:String,password:String,discoverable:Bool) async {
+        do {
+            let _:EmptyResult = try await request("/me/phone/link",method:"POST",body:PhoneLinkBody(phone:phone,password:password,discoverable:discoverable))
+            await phoneState()
+        } catch { alertText = error.localizedDescription }
+    }
+    func discover(_ flag:Bool) async {
+        do {
+            let _:EmptyResult = try await request("/me/phone/visibility",method:"PATCH",body:PhoneVisibleBody(discoverable:flag))
+            await phoneState()
+        } catch { alertText = error.localizedDescription }
+    }
+    func searchPhone(_ phone:String) async -> Person? {
+        guard let q=phone.addingPercentEncoding(withAllowedCharacters:.urlQueryAllowed.subtracting(CharacterSet(charactersIn:"+&=?#"))) else {return nil}
+        do { return try await request("/users/by-phone?phone=\(q)") }
+        catch { alertText = error.localizedDescription; return nil }
+    }
+    func authorizedData(_ path:String) async throws -> Data {
+        var req = URLRequest(url:try url(path))
+        req.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization")
+        let (data,response)=try await URLSession.shared.data(for:req)
+        guard let res=response as? HTTPURLResponse,(200..<300).contains(res.statusCode) else {
+            throw NetworkError.server("Не удалось загрузить вложение")
+        }
+        return data
+    }
+    func upload(_ bytes:Data, to path:String, filename:String, mime:String) async throws {
+        let boundary="NW\(UUID().uuidString)"
+        var req=URLRequest(url:try url(path));req.httpMethod="POST";req.timeoutInterval=90
+        req.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization")
+        req.setValue("multipart/form-data; boundary=\(boundary)",forHTTPHeaderField:"Content-Type")
+        let safeName=filename.replacingOccurrences(of:"\"",with:"_").replacingOccurrences(of:"\\",with:"_")
+        var body=Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(safeName)\"\r\nContent-Type: \(mime)\r\n\r\n".utf8)
+        body.append(bytes);body.append(Data("\r\n--\(boundary)--\r\n".utf8));req.httpBody=body
+        let (_,response)=try await URLSession.shared.data(for:req)
+        guard let status=response as? HTTPURLResponse,(200..<300).contains(status.statusCode) else {
+            throw NetworkError.server("Загрузка не удалась")
+        }
+        eventVersion += 1
+    }
+    func loadAvatar(_ id:Int) async -> Data? { try? await authorizedData("/users/\(id)/avatar") }
+    func updateAvatar(_ bytes:Data) async {
+        do { try await upload(bytes,to:"/me/avatar",filename:"avatar.jpg",mime:"image/jpeg");me = try await request("/me") }
+        catch { alertText=error.localizedDescription }
+    }
+    func sendFile(chatID:Int,bytes:Data,filename:String,mime:String) async {
+        do { try await upload(bytes,to:"/chats/\(chatID)/attachments",filename:filename,mime:mime) }
+        catch { alertText=error.localizedDescription }
+    }
+    func downloadFile(_ file:ChatAttachment) async -> URL? {
+        do {
+            let data=try await authorizedData("/attachments/\(file.id)")
+            let base=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString,isDirectory:true)
+            try FileManager.default.createDirectory(at:base,withIntermediateDirectories:true)
+            let output=base.appendingPathComponent(URL(fileURLWithPath:file.filename).lastPathComponent)
+            try data.write(to:output)
+            return output
+        } catch { alertText=error.localizedDescription;return nil }
+    }
+    func makeCall(to other:Int) async -> VoiceCall? {
+        do { return try await request("/calls/direct/\(other)",method:"POST") }
+        catch { alertText=error.localizedDescription;return nil }
+    }
+    func pendingCalls() async -> [VoiceCall] {
+        do { return try await request("/calls/pending") }
+        catch { return [] }
+    }
+    func acceptCall(id:String) async -> VoiceCall? {
+        do {
+            struct Answer:Decodable { let ticket:String;let path:String }
+            let answer:Answer = try await request("/calls/\(id)/accept",method:"POST")
+            return VoiceCall(id:id,ticket:answer.ticket,path:answer.path,caller_name:nil)
+        } catch { alertText=error.localizedDescription;return nil }
+    }
+    func declineCall(id:String) async {
+        do {let _:EmptyResult = try await request("/calls/\(id)/decline",method:"POST")}
+        catch {alertText=error.localizedDescription}
+    }
+    func voiceURL(_ call:VoiceCall) -> URL? {
+        guard let ticket=call.ticket,let path=call.path else{return nil}
+        return URL(string:serverURL+path+"#ticket="+(ticket.addingPercentEncoding(withAllowedCharacters:.urlQueryAllowed) ?? ticket))
     }
 
     func logout() {

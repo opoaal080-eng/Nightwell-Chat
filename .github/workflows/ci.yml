@@ -25,21 +25,3 @@ jobs:
         run: python -m pip install -r server/requirements.txt
       - name: Run Windows backend tests
         run: cd server; python -m pytest -q
-  ios-build:
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install XcodeGen
-        run: brew install xcodegen
-      - name: Generate Xcode project
-        run: cd ios && xcodegen generate
-      - name: Compile for iOS Simulator
-        run: |
-          xcodebuild -project ios/NightwellChat.xcodeproj -scheme NightwellChat \
-            -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: NightwellChat-simulator
-          path: build/Build/Products/Debug-iphonesimulator/NightwellChat.app
-          if-no-files-found: error

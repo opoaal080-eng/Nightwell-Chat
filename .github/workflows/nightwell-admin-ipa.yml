@@ -1,0 +1,47 @@
+name: Nightwell Admin iPhone IPA
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'admin-ios/**'
+      - '.github/workflows/nightwell-admin-ipa.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-admin-ipa:
+    runs-on: macos-26-intel
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: cd admin-ios && xcodegen generate
+      - name: Build for physical iPhone
+        run: |
+          xcodebuild \
+            -project admin-ios/NightwellAdmin.xcodeproj \
+            -scheme NightwellAdmin \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath admin-build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+      - name: Package unsigned iPhone IPA
+        run: |
+          set -euo pipefail
+          test -f admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist
+          mkdir -p admin-dist/Payload
+          ditto admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app admin-dist/Payload/NightwellAdmin.app
+          ( cd admin-dist && /usr/bin/zip -q -r NightwellAdmin-unsigned.ipa Payload )
+          unzip -t admin-dist/NightwellAdmin-unsigned.ipa
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: NightwellAdmin-iPhone-unsigned-IPA
+          path: admin-dist/NightwellAdmin-unsigned.ipa
+          if-no-files-found: error

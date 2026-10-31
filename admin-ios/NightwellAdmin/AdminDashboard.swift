@@ -422,6 +422,8 @@ struct AdminSettingsScreen: View {
     @AppStorage("nightwell.admin.showtotal") private var showTotal = true
 
     @State private var showToken = false
+    @State private var monitorToken = MonitorTokenVault.read()
+    @State private var revealMonitorToken = false
 
     var body: some View {
         ScrollView {
@@ -447,6 +449,38 @@ struct AdminSettingsScreen: View {
                         settingsRow("Проверка соединения", symbol: "shield.lefthalf.filled",
                                     accessory: "", navigate: true)
                     }
+                }
+                group("МОНИТОРИНГ КОМПЬЮТЕРА") {
+                    HStack(spacing: 8) {
+                        Group {
+                            if revealMonitorToken {
+                                TextField("Ключ из admin-monitor/.env", text: $monitorToken)
+                            } else {
+                                SecureField("Ключ из admin-monitor/.env", text: $monitorToken)
+                            }
+                        }
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(size: 13))
+                        Button {
+                            revealMonitorToken.toggle()
+                        } label: {
+                            Image(systemName: revealMonitorToken ? "eye.slash" : "eye")
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
+                    }
+                    .padding(10)
+                    .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 11))
+                    .onChange(of: monitorToken) { _, value in
+                        MonitorTokenVault.write(value)
+                    }
+                    Toggle("Обновлять нагрузку каждые 3 секунды", isOn:
+                        Binding(
+                            get: { UserDefaults.standard.object(forKey: "nightwell.admin.monitor.autorefresh") as? Bool ?? true },
+                            set: { UserDefaults.standard.set($0, forKey: "nightwell.admin.monitor.autorefresh") }
+                        ))
+                    Text("Секрет хранится в Keychain. Показатели видны на вкладке «Сервер», пока открыт экран.")
+                        .font(.system(size: 11)).foregroundStyle(AdminStyle.soft)
                 }
                 group("ПРОВЕРКА СКОРОСТИ") {
                     HStack {
@@ -508,7 +542,7 @@ struct AdminSettingsScreen: View {
                         .font(.system(size: 11)).foregroundStyle(AdminStyle.soft)
                 }
                 group("О ПРИЛОЖЕНИИ") {
-                    AdminInfoRow(title: "Версия", value: "1.3.0 (5)")
+                    AdminInfoRow(title: "Версия", value: "1.4.0 (6)")
                     AdminInfoRow(title: "Сервисы", value: "Music · Chat")
                     AdminInfoRow(title: "Управление", value: "Nightwell Admin")
                 }

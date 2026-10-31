@@ -16,8 +16,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fun.nightwell.admin
-        MARKETING_VERSION: '1.3.0'
-        CURRENT_PROJECT_VERSION: '5'
+        MARKETING_VERSION: '1.4.0'
+        CURRENT_PROJECT_VERSION: '6'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Nightwell Admin
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen

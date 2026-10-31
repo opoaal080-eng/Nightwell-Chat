@@ -315,6 +315,8 @@ enum TokenVault {
                         .tabItem { Label("Музыка", systemImage: "music.note") }
                     NavigationStack { AdminServiceScreen(service: .chat) }
                         .tabItem { Label("Чат", systemImage: "message.fill") }
+                    NavigationStack { ServerMonitoringScreen() }
+                        .tabItem { Label("Сервер", systemImage: "cpu") }
                     NavigationStack { AdminSettingsScreen() }
                         .tabItem { Label("Настройки", systemImage: "gearshape.fill") }
                 }

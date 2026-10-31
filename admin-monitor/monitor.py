@@ -113,7 +113,7 @@ def _temperature_items() -> list[dict]:
     if sys.platform == "win32":
         # Optional LibreHardwareMonitor/OpenHardwareMonitor WMI integration.
         # If neither application exports its sensors, leave them unavailable.
-        for namespace in ("root\LibreHardwareMonitor", "root\OpenHardwareMonitor"):
+        for namespace in (r"root\LibreHardwareMonitor", r"root\OpenHardwareMonitor"):
             command = (
                 "Get-CimInstance -Namespace '" + namespace +
                 "' -ClassName Sensor -ErrorAction Stop | "

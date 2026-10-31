@@ -186,7 +186,6 @@ struct AdminServiceScreen: View {
 
     @AppStorage("nightwell.admin.showttfb") private var showTTFB = true
     @AppStorage("nightwell.admin.showtotal") private var showTotal = true
-    @AppStorage("nightwell.admin.monitor.autorefresh") private var monitorAutoRefresh = true
     @State private var chosenAction: String?
     @State private var confirmation = false
 
@@ -421,6 +420,7 @@ struct AdminSettingsScreen: View {
     @AppStorage("nightwell.admin.alerts") private var alerts = true
     @AppStorage("nightwell.admin.showttfb") private var showTTFB = true
     @AppStorage("nightwell.admin.showtotal") private var showTotal = true
+    @AppStorage("nightwell.admin.monitor.autorefresh") private var monitorAutoRefresh = true
 
     @State private var showToken = false
     @State private var monitorToken = MonitorTokenVault.read()

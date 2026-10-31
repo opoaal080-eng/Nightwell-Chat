@@ -186,6 +186,7 @@ struct AdminServiceScreen: View {
 
     @AppStorage("nightwell.admin.showttfb") private var showTTFB = true
     @AppStorage("nightwell.admin.showtotal") private var showTotal = true
+    @AppStorage("nightwell.admin.monitor.autorefresh") private var monitorAutoRefresh = true
     @State private var chosenAction: String?
     @State private var confirmation = false
 
@@ -474,11 +475,7 @@ struct AdminSettingsScreen: View {
                     .onChange(of: monitorToken) { _, value in
                         MonitorTokenVault.write(value)
                     }
-                    Toggle("Обновлять нагрузку каждые 3 секунды", isOn:
-                        Binding(
-                            get: { UserDefaults.standard.object(forKey: "nightwell.admin.monitor.autorefresh") as? Bool ?? true },
-                            set: { UserDefaults.standard.set($0, forKey: "nightwell.admin.monitor.autorefresh") }
-                        ))
+                    Toggle("Обновлять нагрузку каждые 3 секунды", isOn: $monitorAutoRefresh)
                     Text("Секрет хранится в Keychain. Показатели видны на вкладке «Сервер», пока открыт экран.")
                         .font(.system(size: 11)).foregroundStyle(AdminStyle.soft)
                 }

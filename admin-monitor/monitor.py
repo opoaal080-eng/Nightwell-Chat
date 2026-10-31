@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -58,8 +59,16 @@ def cpu_name() -> str:
 def _gpu() -> list[dict]:
     # NVIDIA provides optional GPU readings without an additional Python package.
     try:
+        smi = shutil.which("nvidia-smi")
+        if not smi and os.name == "nt":
+            for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432")):
+                if base:
+                    candidate = Path(base) / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe"
+                    if candidate.is_file():
+                        smi = str(candidate)
+                        break
         command = [
-            "nvidia-smi",
+            smi or "nvidia-smi",
             "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
             "--format=csv,noheader,nounits",
         ]
@@ -104,7 +113,7 @@ def _temperature_items() -> list[dict]:
     if sys.platform == "win32":
         # Optional LibreHardwareMonitor/OpenHardwareMonitor WMI integration.
         # If neither application exports its sensors, leave them unavailable.
-        for namespace in ("root/LibreHardwareMonitor", "root/OpenHardwareMonitor"):
+        for namespace in ("root\LibreHardwareMonitor", "root\OpenHardwareMonitor"):
             command = (
                 "Get-CimInstance -Namespace '" + namespace +
                 "' -ClassName Sensor -ErrorAction Stop | "

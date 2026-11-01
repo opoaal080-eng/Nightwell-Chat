@@ -6,6 +6,7 @@ import android.os.Bundle;
 import android.webkit.*;
 import android.widget.*;
 import android.view.View;
+import java.util.ArrayList;
 public final class CallActivity extends Activity {
     private WebView web;
     private PermissionRequest waiting;
@@ -19,9 +20,22 @@ public final class CallActivity extends Activity {
         web.setWebChromeClient(new WebChromeClient(){
             @Override public void onPermissionRequest(PermissionRequest req){
                 runOnUiThread(()->{
-                    if(android.os.Build.VERSION.SDK_INT>=23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
-                        waiting=req;requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},51);
-                    }else req.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+                    if(!"https://chat.nightwell.fun".equals(req.getOrigin().toString())){
+                        req.deny();return;
+                    }
+                    ArrayList<String> missing=new ArrayList<>();
+                    for(String resource:req.getResources()){
+                        if(PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource) &&
+                            checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)
+                            missing.add(Manifest.permission.RECORD_AUDIO);
+                        if(PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource) &&
+                            checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)
+                            missing.add(Manifest.permission.CAMERA);
+                    }
+                    if(!missing.isEmpty()){
+                        waiting=req;
+                        requestPermissions(missing.toArray(new String[0]),51);
+                    }else grantMedia(req);
                 });
             }
         });
@@ -30,9 +44,22 @@ public final class CallActivity extends Activity {
         String u=getIntent().getStringExtra("url");
         if(u!=null && u.startsWith("https://chat.nightwell.fun/calls/"))web.loadUrl(u);else finish();
     }
+    private void grantMedia(PermissionRequest req){
+        ArrayList<String> allowed=new ArrayList<>();
+        for(String resource:req.getResources()){
+            if(PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource) &&
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)
+                allowed.add(resource);
+            if(PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource) &&
+                checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)
+                allowed.add(resource);
+        }
+        if(allowed.isEmpty())req.deny();
+        else req.grant(allowed.toArray(new String[0]));
+    }
     @Override public void onRequestPermissionsResult(int req,String[] p,int[] granted){
         super.onRequestPermissionsResult(req,p,granted);
-        if(req==51 && waiting!=null){if(granted.length>0 && granted[0]==PackageManager.PERMISSION_GRANTED)waiting.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE}); else waiting.deny();waiting=null;}
+        if(req==51 && waiting!=null){grantMedia(waiting);waiting=null;}
     }
     @Override public void onDestroy(){if(waiting!=null)waiting.deny();if(web!=null){web.loadUrl("about:blank");web.destroy();}super.onDestroy();}
 }

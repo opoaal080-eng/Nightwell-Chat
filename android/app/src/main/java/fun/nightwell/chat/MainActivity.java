@@ -46,6 +46,7 @@ public final class MainActivity extends Activity {
     int requestedVoiceID=-1;
     long voicePlaybackGeneration=0;
     int voicePlaybackChatID=-1;
+    String voicePlaybackToken="";
     long voiceStartedAt=0;
     final Handler voiceHandler=new Handler(Looper.getMainLooper());
     final Runnable voiceTimeout=()->{if(voiceRecorder!=null)finishVoice();};
@@ -356,6 +357,7 @@ public final class MainActivity extends Activity {
         requestedVoiceID=-1;
         playingVoiceID=-1;
         voicePlaybackChatID=-1;
+        voicePlaybackToken="";
         if(voicePlayer!=null){
             try{voicePlayer.stop();}catch(Exception ignored){}
             voicePlayer.release();
@@ -368,9 +370,10 @@ public final class MainActivity extends Activity {
         stopVoicePlayback();
         requestedVoiceID=id;
         voicePlaybackChatID=chatId;
+        voicePlaybackToken=token;
         long generation=voicePlaybackGeneration;
         perform(()->http("/attachments/"+id,"GET",null),bytes->{
-            if(generation!=voicePlaybackGeneration || !"chat".equals(screen) || chatId!=voicePlaybackChatID)return;
+            if(generation!=voicePlaybackGeneration || !"chat".equals(screen) || chatId!=voicePlaybackChatID || !token.equals(voicePlaybackToken))return;
             if(bytes.length==0){stopVoicePlayback();note("Пустое голосовое сообщение");return;}
             File temp=new File(getCacheDir(),"voice_playback_"+id+".m4a");
             try(FileOutputStream output=new FileOutputStream(temp)){output.write(bytes);}

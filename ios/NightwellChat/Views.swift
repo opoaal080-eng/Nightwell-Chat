@@ -406,6 +406,7 @@ struct VideoCircleBubble:View {
 
 final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecordingDelegate {
     var onVideo:((URL)->Void)?
+    var onClose:(()->Void)?
     private let session=AVCaptureSession()
     private let output=AVCaptureMovieFileOutput()
     private let preview=AVCaptureVideoPreviewLayer()
@@ -500,20 +501,22 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         ticker?.invalidate()
         if output.isRecording {output.stopRecording();onVideo=nil}
         DispatchQueue.global(qos:.userInitiated).async {[weak self] in self?.session.stopRunning()}
-        dismiss(animated:true)
+        onClose?()
     }
     func fileOutput(_ output:AVCaptureFileOutput,didFinishRecordingTo url:URL,from connections:[AVCaptureConnection],error:Error?){
         ticker?.invalidate()
         DispatchQueue.global(qos:.userInitiated).async {[weak self] in self?.session.stopRunning()}
         if error == nil {onVideo?(url)}
-        dismiss(animated:true)
+        onClose?()
     }
 }
 struct VideoCircleRecorder:UIViewControllerRepresentable {
     let onVideo:(URL)->Void
+    let onClose:()->Void
     func makeUIViewController(context:Context)->CircleCaptureController {
         let controller=CircleCaptureController()
         controller.onVideo=onVideo
+        controller.onClose=onClose
         return controller
     }
     func updateUIViewController(_ controller:CircleCaptureController,context:Context){}
@@ -718,7 +721,7 @@ struct ChatView: View {
         }
         .sheet(isPresented:$showingCall){if let callURL {SafariCallView(url:callURL)}}
         .fullScreenCover(isPresented:$showingVideoRecorder){
-            VideoCircleRecorder { url in
+            VideoCircleRecorder(onVideo: { url in
                 Task {
                     guard let data=try? Data(contentsOf:url) else {
                         store.alertText="Не удалось прочитать видео"
@@ -733,7 +736,7 @@ struct ChatView: View {
                     if success {await reload()}
                     uploading=false
                 }
-            }.ignoresSafeArea()
+            }, onClose: { showingVideoRecorder=false }).ignoresSafeArea()
         }
         .fileImporter(isPresented:$showingFilePicker,allowedContentTypes:[.item]){
             result in

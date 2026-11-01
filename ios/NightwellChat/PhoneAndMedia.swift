@@ -150,6 +150,11 @@ struct SafariCallView:UIViewRepresentable {
         return view
     }
     func updateUIView(_ vc:WKWebView,context:Context){}
+    static func dismantleUIView(_ view:WKWebView,coordinator:Coordinator){
+        view.stopLoading()
+        view.loadHTMLString("",baseURL:nil)
+        view.uiDelegate=nil
+    }
     final class Coordinator:NSObject,WKUIDelegate {
         @available(iOS 15.0,*)
         func webView(_ webView:WKWebView,requestMediaCapturePermissionFor origin:WKSecurityOrigin,

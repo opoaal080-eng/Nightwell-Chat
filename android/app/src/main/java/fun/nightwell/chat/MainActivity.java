@@ -373,7 +373,7 @@ public final class MainActivity extends Activity {
         TextView play=label("▶",38,FG);
         play.setGravity(Gravity.CENTER);
         circle.addView(play,new FrameLayout.LayoutParams(-1,-1));
-        circle.setOnClickListener(v->openAttachment(attachment));
+        circle.setOnClickListener(v->playVideoCircle(attachment));
         perform(()->{
             File folder=new File(getCacheDir(),"circle_thumbnails");
             folder.mkdirs();
@@ -397,6 +397,62 @@ public final class MainActivity extends Activity {
         },bytes->{
             Bitmap frame=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
             if(frame!=null)thumbnail.setImageBitmap(frame);
+        });
+    }
+    void playVideoCircle(JSONObject attachment){
+        final int id=attachment.optInt("id");
+        final int currentChat=chatId;
+        final String currentToken=token;
+        Dialog dialog=new Dialog(this);
+        FrameLayout frame=new FrameLayout(this);
+        frame.setBackgroundColor(BG);
+        VideoView video=new VideoView(this);
+        FrameLayout.LayoutParams vp=new FrameLayout.LayoutParams(dp(280),dp(280),Gravity.CENTER);
+        frame.addView(video,vp);
+        GradientDrawable mask=new GradientDrawable();
+        mask.setShape(GradientDrawable.OVAL);
+        mask.setColor(PANEL);
+        video.setBackground(mask);
+        video.setClipToOutline(true);
+        ProgressBar progress=new ProgressBar(this);
+        FrameLayout.LayoutParams pp=new FrameLayout.LayoutParams(dp(42),dp(42),Gravity.CENTER);
+        frame.addView(progress,pp);
+        TextView close=label("✕",26,FG);
+        close.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(dp(52),dp(52),Gravity.TOP|Gravity.END);
+        frame.addView(close,cp);
+        close.setOnClickListener(v->dialog.dismiss());
+        dialog.setContentView(frame);
+        if(dialog.getWindow()!=null)dialog.getWindow().setLayout(-1,dp(370));
+        dialog.setOnDismissListener(d->{video.stopPlayback();});
+        dialog.show();
+        if(dialog.getWindow()!=null)dialog.getWindow().setLayout(-1,dp(370));
+        perform(()->{
+            File folder=new File(getCacheDir(),"video_circles");
+            folder.mkdirs();
+            String name=attachment.optString("filename","video_circle.mp4");
+            String extension=name.lastIndexOf('.')>=0?name.substring(name.lastIndexOf('.')):".mp4";
+            File file=new File(folder,"circle_"+id+extension.replaceAll("[^a-zA-Z0-9.]",""));
+            if(!file.exists()||file.length()==0){
+                byte[] bytes=http("/attachments/"+id,"GET",null);
+                if(bytes.length==0)throw new IOException("Пустое видеосообщение");
+                try(FileOutputStream out=new FileOutputStream(file)){out.write(bytes);}
+            }
+            return file.getAbsolutePath().getBytes(StandardCharsets.UTF_8);
+        },bytes->{
+            if(!dialog.isShowing()||currentChat!=chatId||!currentToken.equals(token))return;
+            String filePath=new String(bytes,StandardCharsets.UTF_8);
+            video.setOnPreparedListener(mp->{
+                progress.setVisibility(View.GONE);
+                mp.setLooping(true);
+                video.start();
+            });
+            video.setOnErrorListener((mp,what,extra)->{
+                progress.setVisibility(View.GONE);
+                note("Не удалось воспроизвести видеосообщение");
+                return true;
+            });
+            video.setVideoPath(filePath);
         });
     }
     void stopVoicePlayback(){

@@ -70,7 +70,7 @@ struct LoginView:View {
                     legacy.toggle()
                 }.font(.footnote).foregroundStyle(.gray)
             }.padding(24)
-        }.background(Color.black)
+        }.background(NightwellBackground())
         .scrollDismissesKeyboard(.interactively)
     }
 }
@@ -1035,9 +1035,10 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(muted)
                 }
                 Section { Button("Выйти из аккаунта",role:.destructive) { store.logout(); dismiss() } }
-            }.scrollContentBackground(.hidden).background(ink)
+            }.scrollContentBackground(.hidden).background(NightwellBackground())
                 .scrollDismissesKeyboard(.interactively)
                 .navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(.ultraThinMaterial,for:.navigationBar)
                 .toolbar { ToolbarItem(placement:.topBarTrailing) { Button("Готово") { dismiss() } } }
         }.onAppear { server=store.serverURL; displayName=store.me?.display_name ?? "" }
     }

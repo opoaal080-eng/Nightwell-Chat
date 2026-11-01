@@ -456,8 +456,8 @@ struct ChatView: View {
             Task{
                 let security=file.startAccessingSecurityScopedResource()
                 defer {if security{file.stopAccessingSecurityScopedResource()}}
-                guard let data=try? Data(contentsOf:file),data.count<=15*1024*1024 else {
-                    store.alertText="Размер файла не должен превышать 15 МБ";return
+                guard let data=try? Data(contentsOf:file),data.count<=50*1024*1024 else {
+                    store.alertText="Размер файла не должен превышать 50 МБ";return
                 }
                 uploading=true
                 await store.sendFile(chatID:chat.id,bytes:data,filename:file.lastPathComponent,mime:"application/octet-stream")

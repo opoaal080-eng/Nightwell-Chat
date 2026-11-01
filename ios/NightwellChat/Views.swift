@@ -312,13 +312,18 @@ struct GroupView: View {
 }
 
 struct VoiceWaveform:View {
+    private let heights: [CGFloat] = (0..<28).map { index in
+        CGFloat(5 + (index * 17 + index * index * 3) % 22)
+    }
     var body:some View {
         HStack(alignment:.center,spacing:3) {
-            ForEach(0..<28,id:\.self){i in
-                Capsule().fill(.white.opacity(0.8))
-                    .frame(width:3,height:CGFloat(5+(i*17+i*i*3)%22))
+            ForEach(heights.indices,id:\.self) { index in
+                Capsule()
+                    .fill(Color.white.opacity(0.8))
+                    .frame(width:3,height:heights[index])
             }
-        }.frame(height:32)
+        }
+        .frame(height:32)
     }
 }
 

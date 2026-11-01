@@ -311,6 +311,32 @@ struct GroupView: View {
     }
 }
 
+struct VideoCircleRecorder: UIViewControllerRepresentable {
+    let onVideo: (URL) -> Void
+    @Environment(\.dismiss) private var dismiss
+    func makeCoordinator() -> Coordinator { Coordinator(parent:self) }
+    func makeUIViewController(context:Context)->UIImagePickerController {
+        let picker=UIImagePickerController()
+        picker.sourceType = .camera
+        picker.mediaTypes = ["public.movie"]
+        picker.cameraCaptureMode = .video
+        picker.videoMaximumDuration = 60
+        picker.videoQuality = .typeMedium
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ picker:UIImagePickerController,context:Context){}
+    final class Coordinator:NSObject,UIImagePickerControllerDelegate,UINavigationControllerDelegate {
+        let parent:VideoCircleRecorder
+        init(parent:VideoCircleRecorder){self.parent=parent}
+        func imagePickerControllerDidCancel(_ picker:UIImagePickerController){parent.dismiss()}
+        func imagePickerController(_ picker:UIImagePickerController,didFinishPickingMediaWithInfo info:[UIImagePickerController.InfoKey:Any]){
+            if let url=info[.mediaURL] as? URL {parent.onVideo(url)}
+            parent.dismiss()
+        }
+    }
+}
+
 struct ChatView: View {
     @EnvironmentObject var store: ChatStore
     let chat: Conversation
@@ -325,6 +351,7 @@ struct ChatView: View {
     @StateObject private var voiceRecorder = NightwellVoiceRecorder()
     @FocusState private var composerFocused:Bool
     @State private var showingFilePicker=false
+    @State private var showingVideoRecorder=false
     @State private var preview:URL?
     @State private var audioPlayer: AVPlayer?
     @State private var playingAudioID: Int?
@@ -461,6 +488,18 @@ struct ChatView: View {
                         Text(voiceRecorder.isRecording ? "Стоп" : "Голос").font(.system(size: 10))
                     }
                 }.disabled(uploading)
+                Button {
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        showingVideoRecorder=true
+                    } else {
+                        store.alertText="На этом устройстве нет камеры для записи видеосообщений"
+                    }
+                } label: {
+                    VStack(spacing:2) {
+                        Image(systemName:"video.circle.fill").font(.title2)
+                        Text("Кружок").font(.system(size:10))
+                    }
+                }.disabled(uploading)
                 if composerFocused {
                     Button { composerFocused=false } label: {
                         Image(systemName:"keyboard.chevron.compact.down").font(.title3)
@@ -494,6 +533,24 @@ struct ChatView: View {
             }
         }
         .sheet(isPresented:$showingCall){if let callURL {SafariCallView(url:callURL)}}
+        .fullScreenCover(isPresented:$showingVideoRecorder){
+            VideoCircleRecorder { url in
+                Task {
+                    guard let data=try? Data(contentsOf:url) else {
+                        store.alertText="Не удалось прочитать видео"
+                        return
+                    }
+                    guard data.count<=50*1024*1024 else {
+                        store.alertText="Видео больше 50 МБ. Запиши более короткое сообщение."
+                        return
+                    }
+                    uploading=true
+                    await store.sendFile(chatID:chat.id,bytes:data,filename:"video_circle.mov",mime:"video/quicktime")
+                    await reload()
+                    uploading=false
+                }
+            }.ignoresSafeArea()
+        }
         .fileImporter(isPresented:$showingFilePicker,allowedContentTypes:[.item]){
             result in
             guard case .success(let file)=result else{return}

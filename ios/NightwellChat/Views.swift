@@ -322,23 +322,24 @@ struct VoiceWaveform:View {
     }
 }
 
+final class CirclePlayerView:UIView {
+    override static var layerClass:AnyClass {AVPlayerLayer.self}
+    var videoLayer:AVPlayerLayer {layer as! AVPlayerLayer}
+}
 struct InlineCirclePlayer:UIViewRepresentable {
     let player:AVPlayer
-    func makeUIView(context:Context)->UIView {
-        let view=UIView()
+    func makeUIView(context:Context)->CirclePlayerView {
+        let view=CirclePlayerView()
         view.backgroundColor = .black
-        let layer=AVPlayerLayer(player:player)
-        layer.videoGravity = .resizeAspectFill
-        view.layer.addSublayer(layer)
+        view.videoLayer.videoGravity = .resizeAspectFill
+        view.videoLayer.player=player
         return view
     }
-    func updateUIView(_ view:UIView,context:Context){
-        guard let layer=view.layer.sublayers?.first as? AVPlayerLayer else{return}
-        layer.player=player
-        layer.frame=view.bounds
+    func updateUIView(_ view:CirclePlayerView,context:Context){
+        view.videoLayer.player=player
     }
-    static func dismantleUIView(_ view:UIView,coordinator:()){
-        (view.layer.sublayers?.first as? AVPlayerLayer)?.player=nil
+    static func dismantleUIView(_ view:CirclePlayerView,coordinator:()){
+        view.videoLayer.player=nil
     }
 }
 struct VideoCircleBubble:View {

@@ -252,10 +252,11 @@ struct InboxView: View {
                 .buttonStyle(.plain)
                 .frame(maxWidth:.infinity)
                 .frame(height:54)
+                .padding(.horizontal,12)
                 .background(.ultraThinMaterial,in:Capsule())
                 .overlay(Capsule().stroke(LinearGradient(colors:[.white.opacity(0.35),.white.opacity(0.05)],startPoint:.top,endPoint:.bottom),lineWidth:1))
                 .shadow(color:.black.opacity(0.3),radius:18,y:8)
-                .padding(.horizontal,24).padding(.bottom,8)
+                .padding(.horizontal,24).padding(.bottom,3)
             }
             .navigationDestination(item:$selected) { ChatView(chat:$0) }
             .sheet(isPresented:$findPeople) { PeopleView { chat in findPeople=false; selected=chat } }
@@ -475,7 +476,8 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     private var ticker:Timer?
     override func viewDidLoad(){
         super.viewDidLoad()
-        view.backgroundColor = .black
+        view.backgroundColor = .clear
+        view.isOpaque=false
         preview.session=session
         preview.videoGravity = .resizeAspectFill
         view.layer.addSublayer(preview)
@@ -520,8 +522,9 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         preview.masksToBounds=true
         record.frame=CGRect(x:(view.bounds.width-76)/2,y:y+side+42,width:76,height:76)
         record.layer.cornerRadius=38
-        flip.frame=CGRect(x:view.bounds.width-88,y:y+side+54,width:60,height:54)
-        flash.frame=CGRect(x:28,y:y+side+54,width:60,height:54)
+        let controlsY=view.bounds.height-view.safeAreaInsets.bottom-145
+        flip.frame=CGRect(x:view.bounds.width-88,y:controlsY,width:60,height:54)
+        flash.frame=CGRect(x:28,y:controlsY,width:60,height:54)
         timer.frame=CGRect(x:0,y:y-44,width:view.bounds.width,height:30)
     }
     private func configure(){
@@ -721,6 +724,7 @@ struct ChatView: View {
     @State private var preview:URL?
     @State private var audioPlayer: AVPlayer?
     @State private var playingAudioID: Int?
+    @State private var audioEndObserver:NSObjectProtocol?
     @State private var showingCall=false
     @State private var callURL:URL?
     var body: some View {
@@ -751,9 +755,15 @@ struct ChatView: View {
                                                         playingAudioID = nil
                                                     } else if let url = await store.downloadFile(file) {
                                                         audioPlayer?.pause()
-                                                        audioPlayer = AVPlayer(url: url)
+                                                        let newPlayer=AVPlayer(url: url)
+                                                        audioPlayer = newPlayer
                                                         playingAudioID = file.id
-                                                        audioPlayer?.play()
+                                                        if let audioEndObserver {NotificationCenter.default.removeObserver(audioEndObserver)}
+                                                        audioEndObserver=NotificationCenter.default.addObserver(forName:.AVPlayerItemDidPlayToEndTime,object:newPlayer.currentItem,queue:.main){_ in
+                                                            newPlayer.seek(to:.zero)
+                                                            playingAudioID=nil
+                                                        }
+                                                        newPlayer.play()
                                                     }
                                                 } else {
                                                     preview = await store.downloadFile(file)
@@ -959,7 +969,7 @@ struct ChatView: View {
                 uploading=false
             }
         }
-        .onDisappear { audioPlayer?.pause(); audioPlayer = nil; playingAudioID = nil; voiceRecorder.cancel() }
+        .onDisappear { audioPlayer?.pause(); audioPlayer = nil; playingAudioID = nil; if let audioEndObserver {NotificationCenter.default.removeObserver(audioEndObserver)}; voiceRecorder.cancel() }
         .onChange(of:playingAudioID) { _, activeID in
             if activeID == nil { audioPlayer?.pause() }
         }

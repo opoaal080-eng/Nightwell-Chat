@@ -13,6 +13,7 @@ import android.media.MediaRecorder;
 import android.os.*;
 import android.provider.ContactsContract;
 import android.provider.OpenableColumns;
+import android.provider.MediaStore;
 import android.view.*;
 import android.widget.*;
 import androidx.core.content.FileProvider;
@@ -27,7 +28,7 @@ import java.util.function.Consumer;
 public final class MainActivity extends Activity {
     static final String HOST="https://chat.nightwell.fun";
     static final int BG=0xff080808, PANEL=0xff1a1a1a, FG=0xfff5f5f5, MUTED=0xffaaaaaa;
-    static final int PICK_AVATAR=12, PICK_ATTACHMENT=13, PICK_CONTACT=14;
+    static final int PICK_AVATAR=12, PICK_ATTACHMENT=13, PICK_CONTACT=14, CAPTURE_VIDEO=15;
     final ExecutorService network=Executors.newFixedThreadPool(3);
     final Handler handler=new Handler(Looper.getMainLooper());
     String token="", screen="", chatTitle="";
@@ -248,6 +249,13 @@ public final class MainActivity extends Activity {
                 requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},102);
             else startVoice();
         });
+        btn("◉ Записать видеосообщение",()->{
+            Intent camera=new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+            camera.putExtra(MediaStore.EXTRA_DURATION_LIMIT,60);
+            camera.putExtra(MediaStore.EXTRA_VIDEO_QUALITY,0);
+            if(camera.resolveActivity(getPackageManager())!=null)startActivityForResult(camera,CAPTURE_VIDEO);
+            else note("На устройстве нет приложения для записи видео");
+        });
         btn("＋ Фото или файл",()->{
             Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);pick.addCategory(Intent.CATEGORY_OPENABLE);pick.setType("*/*");
             startActivityForResult(pick,PICK_ATTACHMENT);
@@ -415,7 +423,7 @@ public final class MainActivity extends Activity {
     }
     void upload(Uri uri,boolean avatar){
         int cid=chatId;perform(()->{
-            byte[] data=read(getContentResolver().openInputStream(uri),16*1024*1024);
+            byte[] data=read(getContentResolver().openInputStream(uri),50*1024*1024);
             String name=filename(uri);String mime=getContentResolver().getType(uri);if(mime==null)mime="application/octet-stream";
             if(avatar){
                 Bitmap bitmap=BitmapFactory.decodeByteArray(data,0,data.length);
@@ -426,12 +434,22 @@ public final class MainActivity extends Activity {
             return multipart(avatar?"/me/avatar":"/chats/"+cid+"/attachments",name,mime,data);
         },ok->{if(avatar)getMe(true);else loadMessages(true);});
     }
+    void uploadVideo(Uri uri){
+        int cid=chatId;
+        perform(()->{
+            byte[] data=read(getContentResolver().openInputStream(uri),50*1024*1024);
+            String mime=getContentResolver().getType(uri);
+            if(mime==null||!mime.startsWith("video/"))mime="video/mp4";
+            return multipart("/chats/"+cid+"/attachments","video_message.mp4",mime,data);
+        },result->loadMessages(true));
+    }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);
         if(result!=RESULT_OK||data==null||data.getData()==null)return;
         Uri uri=data.getData();
         if(request==PICK_AVATAR)upload(uri,true);
         else if(request==PICK_ATTACHMENT)upload(uri,false);
+        else if(request==CAPTURE_VIDEO)uploadVideo(uri);
         else if(request==PICK_CONTACT){
             try(Cursor c=getContentResolver().query(uri,new String[]{ContactsContract.CommonDataKinds.Phone.NUMBER},null,null,null)){
                 if(c!=null && c.moveToFirst())lookup(c.getString(0));

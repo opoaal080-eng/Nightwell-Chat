@@ -1047,10 +1047,10 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Приложение") {
-                    Label("Уведомления и звуки",systemImage:"bell.badge.fill")
-                    Label("Конфиденциальность",systemImage:"lock.fill")
-                    Label("Данные и память",systemImage:"externaldrive.fill")
-                    Label("Оформление",systemImage:"circle.lefthalf.filled")
+                    HStack { Image(systemName:"bell.badge.fill").foregroundStyle(.red); Text("Уведомления и звуки"); Spacer(); Text("Системные").foregroundStyle(.secondary) }
+                    HStack { Image(systemName:"lock.fill").foregroundStyle(.gray); Text("Конфиденциальность") }
+                    HStack { Image(systemName:"externaldrive.fill").foregroundStyle(.green); Text("Данные и память") }
+                    HStack { Image(systemName:"circle.lefthalf.filled").foregroundStyle(.cyan); Text("Оформление"); Spacer(); Text("Тёмное").foregroundStyle(.secondary) }
                 }
                 Section("Версия") {
                     Text("Nightwell Chat 0.7")
@@ -1064,6 +1064,7 @@ struct SettingsView: View {
                 }
                 Section { Button("Выйти из аккаунта",role:.destructive) { store.logout(); dismiss() } }
             }.scrollContentBackground(.hidden).background(Color.black.ignoresSafeArea())
+                .environment(\.defaultMinListRowHeight,54)
                 .scrollDismissesKeyboard(.interactively)
                 .navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.ultraThinMaterial,for:.navigationBar)

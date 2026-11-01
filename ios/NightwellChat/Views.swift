@@ -521,6 +521,9 @@ struct ChatView: View {
             }
         }
         .onDisappear { audioPlayer?.pause(); audioPlayer = nil; playingAudioID = nil; voiceRecorder.cancel() }
+        .onChange(of:playingAudioID) { _, activeID in
+            if activeID == nil { audioPlayer?.pause() }
+        }
         .quickLookPreview($preview)
         .task { await reload() }
         .onChange(of:store.eventVersion) { _,_ in Task { await reload() } }

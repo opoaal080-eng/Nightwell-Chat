@@ -11,6 +11,10 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.media.MediaRecorder;
 import android.media.MediaPlayer;
+import android.media.MediaMetadataRetriever;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.ClipDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.os.*;
 import android.provider.ContactsContract;
 import android.provider.OpenableColumns;
@@ -347,10 +351,43 @@ public final class MainActivity extends Activity {
                 Bitmap map=BitmapFactory.decodeByteArray(bytes,0,bytes.length);if(map!=null)image.setImageBitmap(map);
             });
             image.setOnClickListener(v->openAttachment(attachment));
+        }else if(type.startsWith("video/") && name.startsWith("video_circle.")){
+            showVideoCircle(attachment);
         }else{
             TextView file=bubble((type.startsWith("audio/")?"Голосовое сообщение":type.startsWith("video/")?"Видеосообщение":name)+"\nНажми, чтобы открыть");
             messages.addView(file);file.setOnClickListener(v->{if(type.startsWith("audio/"))playVoice(attachment);else openAttachment(attachment);});
         }
+    }
+    void showVideoCircle(JSONObject attachment){
+        int id=attachment.optInt("id");
+        FrameLayout circle=new FrameLayout(this);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(190),dp(190));
+        lp.setMargins(dp(4),dp(8),dp(4),dp(8));
+        messages.addView(circle,lp);
+        GradientDrawable bg=new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(PANEL);
+        bg.setStroke(dp(2),0xff555555);
+        circle.setBackground(bg);
+        circle.setClipToOutline(true);
+        ImageView thumbnail=new ImageView(this);
+        thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        circle.addView(thumbnail,new FrameLayout.LayoutParams(-1,-1));
+        TextView play=label("▶",38,FG);
+        play.setGravity(Gravity.CENTER);
+        circle.addView(play,new FrameLayout.LayoutParams(-1,-1));
+        circle.setOnClickListener(v->openAttachment(attachment));
+        perform(()->http("/attachments/"+id,"GET",null),bytes->{
+            if(bytes.length==0)return;
+            File temp=new File(getCacheDir(),"video_circle_"+id+".mp4");
+            try(FileOutputStream out=new FileOutputStream(temp)){out.write(bytes);}
+            MediaMetadataRetriever retriever=new MediaMetadataRetriever();
+            try{
+                retriever.setDataSource(temp.getAbsolutePath());
+                Bitmap frame=retriever.getFrameAtTime(0,MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                if(frame!=null)thumbnail.setImageBitmap(frame);
+            }finally{retriever.release();}
+        });
     }
     void stopVoicePlayback(){
         voicePlaybackGeneration++;

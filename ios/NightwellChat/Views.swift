@@ -322,76 +322,81 @@ struct VoiceWaveform:View {
     }
 }
 
+struct InlineCirclePlayer:UIViewRepresentable {
+    let player:AVPlayer
+    func makeUIView(context:Context)->UIView {
+        let view=UIView()
+        view.backgroundColor = .black
+        let layer=AVPlayerLayer(player:player)
+        layer.videoGravity = .resizeAspectFill
+        view.layer.addSublayer(layer)
+        return view
+    }
+    func updateUIView(_ view:UIView,context:Context){
+        guard let layer=view.layer.sublayers?.first as? AVPlayerLayer else{return}
+        layer.player=player
+        layer.frame=view.bounds
+    }
+    static func dismantleUIView(_ view:UIView,coordinator:()){
+        (view.layer.sublayers?.first as? AVPlayerLayer)?.player=nil
+    }
+}
 struct VideoCircleBubble:View {
     @EnvironmentObject var store:ChatStore
     let file:ChatAttachment
     @State private var player:AVPlayer?
-    @State private var isLoading=false
-    @State private var showPlayer=false
-    @State private var loopObserver:NSObjectProtocol?
+    @State private var loading=false
+    @State private var playing=false
+    @State private var observer:NSObjectProtocol?
     var body:some View {
         Button {
-            showPlayer=true
+            Task {await toggle()}
         } label: {
             ZStack {
                 Circle().fill(.white.opacity(0.12))
-                Image(systemName:"play.circle.fill")
-                    .font(.system(size:48)).foregroundStyle(.white)
+                if let player {
+                    InlineCirclePlayer(player:player)
+                        .frame(width:190,height:190)
+                        .clipShape(Circle())
+                }
+                if loading {ProgressView().tint(.white)}
+                else if !playing {
+                    Image(systemName:"play.circle.fill")
+                        .font(.system(size:46)).foregroundStyle(.white)
+                        .shadow(radius:8)
+                }
             }
             .frame(width:190,height:190)
+            .clipShape(Circle())
+            .overlay(Circle().stroke(.white.opacity(0.16),lineWidth:1))
         }
         .buttonStyle(.plain)
-        .sheet(isPresented:$showPlayer,onDismiss:stopPlayback) {
-            ZStack {
-                Color.black.ignoresSafeArea()
-                if let player {
-                    VideoPlayer(player:player)
-                        .frame(width:300,height:300)
-                        .clipShape(Circle())
-                } else if isLoading {
-                    ProgressView("Загрузка кружка").tint(.white)
-                } else {
-                    ProgressView().tint(.white)
-                }
-                VStack {
-                    HStack {
-                        Spacer()
-                        Button("Закрыть") {showPlayer=false}
-                            .padding(16)
-                    }
-                    Spacer()
-                }
-            }
-            .task(id:file.id) {await startPlayback()}
-        }
-        .onDisappear {if !showPlayer {stopPlayback()}}
+        .onDisappear {stop()}
     }
-    @MainActor private func startPlayback() async {
-        guard player == nil else {return}
-        isLoading=true
-        guard let url=await store.downloadFile(file) else {
-            isLoading=false
-            store.alertText="Не удалось загрузить видеосообщение"
-            showPlayer=false
+    @MainActor private func toggle() async {
+        if playing {
+            player?.pause()
+            playing=false
             return
         }
-        guard showPlayer else {isLoading=false;return}
-        let newPlayer=AVPlayer(url:url)
-        player=newPlayer
-        loopObserver=NotificationCenter.default.addObserver(
-            forName:.AVPlayerItemDidPlayToEndTime,
-            object:newPlayer.currentItem,queue:.main
-        ) { _ in newPlayer.seek(to:.zero);newPlayer.play() }
-        isLoading=false
-        newPlayer.play()
+        if let player {player.play();playing=true;return}
+        guard !loading else{return}
+        loading=true
+        defer {loading=false}
+        guard let url=await store.downloadFile(file) else{return}
+        let p=AVPlayer(url:url)
+        player=p
+        observer=NotificationCenter.default.addObserver(
+            forName:.AVPlayerItemDidPlayToEndTime,object:p.currentItem,queue:.main
+        ){_ in p.seek(to:.zero);p.play()}
+        p.play()
+        playing=true
     }
-    private func stopPlayback() {
+    private func stop(){
         player?.pause()
         player=nil
-        if let loopObserver {
-            NotificationCenter.default.removeObserver(loopObserver)
-            self.loopObserver=nil
-        }
+        playing=false
+        if let observer {NotificationCenter.default.removeObserver(observer);self.observer=nil}
     }
 }
 

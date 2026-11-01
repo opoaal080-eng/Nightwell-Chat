@@ -472,9 +472,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     @objc private func switchCamera(){
         guard !output.isRecording else{return}
         cameraPosition=cameraPosition == .front ? .back : .front
-        DispatchQueue.global(qos:.userInitiated).async {[weak self] in
-            DispatchQueue.main.async {self?.configure()}
-        }
+        configure()
     }
     @objc private func toggleRecording(){
         if output.isRecording {output.stopRecording();return}
@@ -492,12 +490,12 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     @objc private func cancel(){
         ticker?.invalidate()
         if output.isRecording {output.stopRecording();onVideo=nil}
-        session.stopRunning()
+        DispatchQueue.global(qos:.userInitiated).async {[weak self] in self?.session.stopRunning()}
         dismiss(animated:true)
     }
     func fileOutput(_ output:AVCaptureFileOutput,didFinishRecordingTo url:URL,from connections:[AVCaptureConnection],error:Error?){
         ticker?.invalidate()
-        session.stopRunning()
+        DispatchQueue.global(qos:.userInitiated).async {[weak self] in self?.session.stopRunning()}
         if error == nil {onVideo?(url)}
         dismiss(animated:true)
     }

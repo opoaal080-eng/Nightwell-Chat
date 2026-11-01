@@ -174,7 +174,7 @@ struct InboxView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                ink.ignoresSafeArea()
+                NightwellBackground()
                 if store.chats.isEmpty {
                     ContentUnavailableView("Пока нет переписок",systemImage:"bubble.left.and.bubble.right",description:Text("Найди пользователя и начни общение"))
                 } else {
@@ -193,56 +193,69 @@ struct InboxView: View {
                                         .font(.subheadline).foregroundStyle(muted).lineLimit(1)
                                 }
                             }.padding(.vertical,6)
-                        }.listRowBackground(Color(white:0.065))
+                        }.listRowBackground(Color.white.opacity(0.045))
                     }.scrollContentBackground(.hidden)
                 }
             }
-            .navigationTitle("Чаты")
-            .toolbarBackground(.ultraThinMaterial,for:.navigationBar)
-            .safeAreaInset(edge:.top) {
-                HStack(spacing:3) {
-                    Button("Все") {chatFilter=0}
-                        .frame(maxWidth:.infinity).padding(.vertical,10)
-                        .background(chatFilter == 0 ? .white.opacity(0.17) : .clear,in:Capsule())
-                    Button("Personal") {chatFilter=1}
-                        .frame(maxWidth:.infinity).padding(.vertical,10)
-                        .background(chatFilter == 1 ? .white.opacity(0.17) : .clear,in:Capsule())
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden,for:.navigationBar)
+            .safeAreaInset(edge:.top,spacing:0) {
+                VStack(spacing:12) {
+                    HStack(spacing:12) {
+                        Button {settings=true} label:{
+                            Image(systemName:"line.3.horizontal")
+                                .font(.system(size:20,weight:.medium))
+                                .frame(width:44,height:44)
+                                .background(.ultraThinMaterial,in:Circle())
+                        }
+                        Spacer()
+                        Text("Чаты").font(.system(size:22,weight:.semibold,design:.rounded))
+                        Spacer()
+                        Button {group=true} label:{
+                            Image(systemName:"person.2.badge.plus")
+                                .font(.system(size:19)).frame(width:44,height:44)
+                                .background(.ultraThinMaterial,in:Circle())
+                        }
+                        Button {findPeople=true} label:{
+                            Image(systemName:"square.and.pencil")
+                                .font(.system(size:19)).frame(width:44,height:44)
+                                .background(glassBlue.opacity(0.72),in:Circle())
+                        }
+                    }
+                    HStack(spacing:4) {
+                        Button {withAnimation(.easeInOut(duration:0.2)){chatFilter=0}} label:{
+                            Text("Все").frame(maxWidth:.infinity).padding(.vertical,10)
+                                .background(chatFilter == 0 ? .white.opacity(0.19) : .clear,in:Capsule())
+                        }
+                        Button {withAnimation(.easeInOut(duration:0.2)){chatFilter=1}} label:{
+                            Text("Личные").frame(maxWidth:.infinity).padding(.vertical,10)
+                                .background(chatFilter == 1 ? .white.opacity(0.19) : .clear,in:Capsule())
+                        }
+                    }
+                    .font(.system(size:14,weight:.semibold))
+                    .padding(4).background(.ultraThinMaterial,in:Capsule())
+                    .overlay(Capsule().stroke(.white.opacity(0.15)))
                 }
-                .font(.subheadline.weight(.medium))
-                .padding(4).background(.ultraThinMaterial,in:Capsule())
-                .padding(.horizontal,16).padding(.top,6)
+                .padding(.horizontal,16).padding(.top,10).padding(.bottom,12)
+                .background(.ultraThinMaterial)
             }
-            .safeAreaInset(edge:.bottom) {
+            .safeAreaInset(edge:.bottom,spacing:0) {
                 HStack(spacing:0) {
-                    Button {findPeople=true} label:{
-                        Label("Контакты",systemImage:"person.crop.circle.fill")
-                    }
-                    Button {calls=true} label:{
-                        Label("Звонки",systemImage:"phone.fill")
-                    }
+                    Button {findPeople=true} label:{Image(systemName:"person.crop.circle")}
+                    Button {calls=true} label:{Image(systemName:"phone")}
                     Image(systemName:"bubble.left.and.bubble.right.fill")
-                        .foregroundStyle(.white)
+                        .foregroundStyle(glassBlue)
                         .frame(maxWidth:.infinity)
-                    Button {settings=true} label:{
-                        Label("Настройки",systemImage:"gearshape.fill")
-                    }
+                    Button {settings=true} label:{Image(systemName:"gearshape")}
                 }
-                .font(.system(size:23,weight:.medium))
-                .labelStyle(.iconOnly)
+                .font(.system(size:23,weight:.regular))
                 .buttonStyle(.plain)
                 .frame(maxWidth:.infinity)
-                .padding(.vertical,13).padding(.horizontal,8)
+                .frame(height:54)
                 .background(.ultraThinMaterial,in:Capsule())
-                .overlay(Capsule().stroke(.white.opacity(0.12),lineWidth:1))
-                .padding(.horizontal,16).padding(.bottom,8)
-            }
-            .toolbar {
-                ToolbarItem(placement:.topBarLeading) { Button { settings=true } label:{ Image(systemName:"slider.horizontal.3") } }
-                ToolbarItemGroup(placement:.topBarTrailing) {
-                    Button { calls=true } label:{ Image(systemName:"phone.arrow.up.right") }
-                    Button { group=true } label:{ Image(systemName:"person.3") }
-                    Button { findPeople=true } label:{ Image(systemName:"square.and.pencil") }
-                }
+                .overlay(Capsule().stroke(LinearGradient(colors:[.white.opacity(0.35),.white.opacity(0.05)],startPoint:.top,endPoint:.bottom),lineWidth:1))
+                .shadow(color:.black.opacity(0.3),radius:18,y:8)
+                .padding(.horizontal,24).padding(.bottom,8)
             }
             .navigationDestination(item:$selected) { ChatView(chat:$0) }
             .sheet(isPresented:$findPeople) { PeopleView { chat in findPeople=false; selected=chat } }

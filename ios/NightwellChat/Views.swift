@@ -321,6 +321,7 @@ struct ChatView: View {
     @State private var older = true
     @State private var pickedPhoto:PhotosPickerItem?
     @State private var uploading=false
+    @StateObject private var voiceRecorder = NightwellVoiceRecorder()
     @FocusState private var composerFocused:Bool
     @State private var showingFilePicker=false
     @State private var preview:URL?
@@ -415,6 +416,27 @@ struct ChatView: View {
                     VStack(spacing:2) {
                         Image(systemName:"paperclip").font(.title2)
                         Text("Файл").font(.system(size:10))
+                    }
+                }.disabled(uploading)
+                Button {
+                    Task {
+                        if voiceRecorder.isRecording {
+                            if let file = voiceRecorder.finish(), let data = try? Data(contentsOf: file) {
+                                uploading = true
+                                await store.sendFile(chatID: chat.id, bytes: data, filename: "voice.m4a", mime: "audio/mp4")
+                                try? FileManager.default.removeItem(at: file)
+                                await reload()
+                                uploading = false
+                            }
+                        } else {
+                            await voiceRecorder.start()
+                            if let error = voiceRecorder.errorMessage { store.alertText = error }
+                        }
+                    }
+                } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: voiceRecorder.isRecording ? "stop.circle.fill" : "mic.fill").font(.title2)
+                        Text(voiceRecorder.isRecording ? "Стоп" : "Голос").font(.system(size: 10))
                     }
                 }.disabled(uploading)
                 if composerFocused {
@@ -553,5 +575,63 @@ struct SettingsView: View {
                 .navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.topBarTrailing) { Button("Готово") { dismiss() } } }
         }.onAppear { server=store.serverURL; displayName=store.me?.display_name ?? "" }
+    }
+}
+
+import AVFoundation
+
+@MainActor
+final class NightwellVoiceRecorder: NSObject, ObservableObject {
+    @Published var isRecording = false
+    @Published var errorMessage: String?
+    private var recorder: AVAudioRecorder?
+    private var recordingURL: URL?
+
+    func start() async {
+        let allowed = await withCheckedContinuation { continuation in
+            AVAudioApplication.requestRecordPermission { continuation.resume(returning: $0) }
+        }
+        guard allowed else {
+            errorMessage = "Разреши доступ к микрофону в настройках iPhone"
+            return
+        }
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+            try AVAudioSession.sharedInstance().setActive(true)
+            let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
+            let options: [String: Any] = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 44100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 64000
+            ]
+            let newRecorder = try AVAudioRecorder(url: destination, settings: options)
+            guard newRecorder.record() else {
+                errorMessage = "Не удалось начать запись"
+                return
+            }
+            recorder = newRecorder
+            recordingURL = destination
+            isRecording = true
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func finish() -> URL? {
+        guard isRecording else { return nil }
+        recorder?.stop()
+        recorder = nil
+        isRecording = false
+        return recordingURL
+    }
+
+    func cancel() {
+        recorder?.stop()
+        recorder?.deleteRecording()
+        recorder = nil
+        recordingURL = nil
+        isRecording = false
     }
 }

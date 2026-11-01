@@ -368,7 +368,7 @@ struct ChatView: View {
                                             if file.content_type.hasPrefix("image/"){
                                                 PrivateImage(attachment:file.id)
                                             } else if file.content_type.hasPrefix("audio/") {
-                                                Label("Голосовое сообщение",systemImage:"waveform")
+                                                Label(playingAudioID == file.id ? "Остановить голосовое" : "Слушать голосовое",systemImage:playingAudioID == file.id ? "pause.circle.fill" : "play.circle.fill")
                                             } else if file.content_type.hasPrefix("video/") {
                                                 Label("Видеосообщение",systemImage:"play.rectangle.fill")
                                             } else {
@@ -520,6 +520,7 @@ struct ChatView: View {
                 uploading=false
             }
         }
+        .onDisappear { audioPlayer?.pause(); audioPlayer = nil; playingAudioID = nil; voiceRecorder.cancel() }
         .quickLookPreview($preview)
         .task { await reload() }
         .onChange(of:store.eventVersion) { _,_ in Task { await reload() } }

@@ -42,6 +42,7 @@ public final class MainActivity extends Activity {
     File voiceFile;
     Button voiceButton;
     MediaPlayer voicePlayer;
+    int playingVoiceID=-1;
     long voiceStartedAt=0;
     final Handler voiceHandler=new Handler(Looper.getMainLooper());
     final Runnable voiceTimeout=()->{if(voiceRecorder!=null)finishVoice();};
@@ -348,6 +349,7 @@ public final class MainActivity extends Activity {
         }
     }
     void stopVoicePlayback(){
+        playingVoiceID=-1;
         if(voicePlayer!=null){
             try{voicePlayer.stop();}catch(Exception ignored){}
             voicePlayer.release();
@@ -356,6 +358,7 @@ public final class MainActivity extends Activity {
     }
     void playVoice(JSONObject attachment){
         int id=attachment.optInt("id");
+        if(voicePlayer!=null && playingVoiceID==id){stopVoicePlayback();return;}
         stopVoicePlayback();
         perform(()->http("/attachments/"+id,"GET",null),bytes->{
             File temp=new File(getCacheDir(),"voice_playback_"+id+".m4a");
@@ -366,6 +369,7 @@ public final class MainActivity extends Activity {
                 player.setOnCompletionListener(p->stopVoicePlayback());
                 player.prepare();
                 voicePlayer=player;
+                playingVoiceID=id;
                 player.start();
             }catch(Exception e){stopVoicePlayback();note("Не удалось воспроизвести голосовое");}
         });

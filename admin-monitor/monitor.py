@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import math
 import json
 import os
 import platform
@@ -42,6 +43,18 @@ def rate(current: int, previous: int | None, seconds: float) -> float | None:
     if previous is None or seconds <= 0:
         return None
     return round(max(0, current - previous) / seconds, 1)
+
+
+def cpu_usage_sample(sample_seconds: float = 0.25) -> tuple[float, list[float]]:
+    """Measure load using a real per-core interval, including the first request."""
+    values = psutil.cpu_percent(interval=sample_seconds, percpu=True)
+    per_core = [round(max(0.0, min(100.0, float(v))), 1)
+                for v in values if math.isfinite(float(v))]
+    if not per_core:
+        total = float(psutil.cpu_percent(interval=sample_seconds))
+        total = round(max(0.0, min(100.0, total)), 1) if math.isfinite(total) else 0.0
+        return total, []
+    return round(sum(per_core) / len(per_core), 1), per_core
 
 
 def cpu_name() -> str:
@@ -216,6 +229,7 @@ def collect() -> dict:
         }
         STATS["checked"] = now
 
+        cpu_usage, cpu_cores = cpu_usage_sample()
         result = {
             "timestamp": int(time.time()),
             "hostname": socket.gethostname()[:100],
@@ -223,10 +237,10 @@ def collect() -> dict:
             "uptime_seconds": max(0, int(time.time() - psutil.boot_time())),
             "cpu": {
                 "model": cpu_name(),
-                "usage_percent": round(psutil.cpu_percent(interval=None), 1),
+                "usage_percent": cpu_usage,
                 "physical_cores": psutil.cpu_count(logical=False),
                 "logical_cores": psutil.cpu_count(logical=True),
-                "per_core_percent": [round(x, 1) for x in psutil.cpu_percent(interval=None, percpu=True)],
+                "per_core_percent": cpu_cores,
             },
             "memory": {
                 "total_bytes": memory.total,

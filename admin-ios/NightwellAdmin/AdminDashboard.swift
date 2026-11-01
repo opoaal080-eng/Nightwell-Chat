@@ -388,6 +388,21 @@ struct AdminServiceScreen: View {
                         propose("update")
                     }
                 }
+                NavigationLink {
+                    ServerUpdateSchedulingScreen(service: service)
+                } label: {
+                    HStack(spacing: 11) {
+                        Image(systemName: "calendar.badge.clock")
+                        Text("Расписание и ручное обновление")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(12)
+                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .disabled(model.admin == nil)
                 Text("Команды доступны только после настройки прав на Windows. Nightwell Music и Chat управляются отдельно.")
                     .font(.system(size: 10)).foregroundStyle(.white.opacity(0.43))
             }

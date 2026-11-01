@@ -368,6 +368,7 @@ public final class MainActivity extends Activity {
         long generation=voicePlaybackGeneration;
         perform(()->http("/attachments/"+id,"GET",null),bytes->{
             if(generation!=voicePlaybackGeneration || !"chat".equals(screen))return;
+            if(bytes.length==0){stopVoicePlayback();note("Пустое голосовое сообщение");return;}
             File temp=new File(getCacheDir(),"voice_playback_"+id+".m4a");
             try(FileOutputStream output=new FileOutputStream(temp)){output.write(bytes);}
             try{

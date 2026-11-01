@@ -40,6 +40,7 @@ public final class CallActivity extends Activity {
             }
         });
         web.getSettings().setJavaScriptEnabled(true);
+        web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setMediaPlaybackRequiresUserGesture(false);
         String u=getIntent().getStringExtra("url");
         if(u!=null && u.startsWith("https://chat.nightwell.fun/calls/"))web.loadUrl(u);else finish();

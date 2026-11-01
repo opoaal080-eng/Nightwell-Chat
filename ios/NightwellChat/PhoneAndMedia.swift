@@ -134,9 +134,9 @@ struct PhoneLinkView:View {
     }
 }
 
-struct SafariCallView:UIViewControllerRepresentable {
+struct SafariCallView:UIViewRepresentable {
     let url:URL
-    func makeUIViewController(context:Context)->WKWebView {
+    func makeUIView(context:Context)->WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
@@ -147,7 +147,7 @@ struct SafariCallView:UIViewControllerRepresentable {
         view.load(URLRequest(url:url))
         return view
     }
-    func updateUIViewController(_ vc:WKWebView,context:Context){}
+    func updateUIView(_ vc:WKWebView,context:Context){}
 }
 
 struct IncomingCallsView:View {

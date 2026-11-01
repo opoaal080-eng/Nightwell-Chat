@@ -813,7 +813,7 @@ struct ChatView: View {
                                 if message.sender_id != store.me?.id { Spacer(minLength:45) }
                             }.id(message.id)
                         }
-                    }.padding(.horizontal,14).padding(.vertical,12)
+                    }.padding(.horizontal,14).padding(.top,12).padding(.bottom,100)
                 }
                 .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
@@ -822,7 +822,8 @@ struct ChatView: View {
                     if let id=messages.last?.id { withAnimation(.easeOut(duration:0.2)) { proxy.scrollTo(id,anchor:.bottom) } }
                 }
             }
-            Divider().overlay(white.opacity(0.15))
+            .padding(.bottom,-74)
+            // Messages continue underneath the floating transparent composer.
             if let reply {
                 HStack {
                     VStack(alignment:.leading) { Text("Ответ \(reply.sender_name)").font(.caption.bold()); Text(reply.body).lineLimit(1).font(.caption).foregroundStyle(muted) }

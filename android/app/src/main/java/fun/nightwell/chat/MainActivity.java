@@ -374,16 +374,29 @@ public final class MainActivity extends Activity {
         play.setGravity(Gravity.CENTER);
         circle.addView(play,new FrameLayout.LayoutParams(-1,-1));
         circle.setOnClickListener(v->openAttachment(attachment));
-        perform(()->http("/attachments/"+id,"GET",null),bytes->{
-            if(bytes.length==0)return;
+        perform(()->{
+            File folder=new File(getCacheDir(),"circle_thumbnails");
+            folder.mkdirs();
+            File cached=new File(folder,"frame_"+id+".jpg");
+            if(cached.exists())return java.nio.file.Files.readAllBytes(cached.toPath());
+            byte[] bytes=http("/attachments/"+id,"GET",null);
+            if(bytes.length==0)return new byte[0];
             File temp=new File(getCacheDir(),"video_circle_"+id+".mp4");
             try(FileOutputStream out=new FileOutputStream(temp)){out.write(bytes);}
             MediaMetadataRetriever retriever=new MediaMetadataRetriever();
             try{
                 retriever.setDataSource(temp.getAbsolutePath());
                 Bitmap frame=retriever.getFrameAtTime(0,MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
-                if(frame!=null)thumbnail.setImageBitmap(frame);
-            }finally{retriever.release();}
+                if(frame==null)return new byte[0];
+                ByteArrayOutputStream buffer=new ByteArrayOutputStream();
+                frame.compress(Bitmap.CompressFormat.JPEG,75,buffer);
+                byte[] jpeg=buffer.toByteArray();
+                try(FileOutputStream out=new FileOutputStream(cached)){out.write(jpeg);}
+                return jpeg;
+            }finally{retriever.release();temp.delete();}
+        },bytes->{
+            Bitmap frame=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
+            if(frame!=null)thumbnail.setImageBitmap(frame);
         });
     }
     void stopVoicePlayback(){

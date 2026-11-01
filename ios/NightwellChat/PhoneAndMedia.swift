@@ -136,11 +136,13 @@ struct PhoneLinkView:View {
 
 struct SafariCallView:UIViewRepresentable {
     let url:URL
+    func makeCoordinator()->Coordinator { Coordinator() }
     func makeUIView(context:Context)->WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         let view = WKWebView(frame: .zero, configuration: config)
+        view.uiDelegate = context.coordinator
         view.backgroundColor = .black
         view.isOpaque = false
         view.scrollView.isScrollEnabled = false
@@ -148,6 +150,18 @@ struct SafariCallView:UIViewRepresentable {
         return view
     }
     func updateUIView(_ vc:WKWebView,context:Context){}
+    final class Coordinator:NSObject,WKUIDelegate {
+        @available(iOS 15.0,*)
+        func webView(_ webView:WKWebView,requestMediaCapturePermissionFor origin:WKSecurityOrigin,
+                     initiatedByFrame frame:WKFrameInfo,type:WKMediaCaptureType,
+                     decisionHandler:@escaping (WKPermissionDecision)->Void){
+            if origin.protocol=="https" && origin.host=="chat.nightwell.fun" {
+                decisionHandler(.grant)
+            } else {
+                decisionHandler(.deny)
+            }
+        }
+    }
 }
 
 struct IncomingCallsView:View {

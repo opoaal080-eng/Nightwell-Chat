@@ -392,7 +392,7 @@ public final class MainActivity extends Activity {
         int id=attachment.optInt("id");String mime=attachment.optString("content_type","application/octet-stream");
         String name=attachment.optString("filename","file").replaceAll("[^a-zA-Z0-9._-]","_");
         perform(()->http("/attachments/"+id,"GET",null),bytes->{
-            File folder=new File(getCacheDir(),"shared");folder.mkdirs();File f=new File(folder,name);
+            File folder=new File(getCacheDir(),"shared");folder.mkdirs();File f=new File(folder,id+"_"+name);
             try(FileOutputStream out=new FileOutputStream(f)){out.write(bytes);}
             Uri uri=FileProvider.getUriForFile(this,getPackageName()+".files",f);
             Intent open=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);

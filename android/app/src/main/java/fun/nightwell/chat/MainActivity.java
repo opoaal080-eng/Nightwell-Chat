@@ -350,9 +350,35 @@ public final class MainActivity extends Activity {
             image.setOnClickListener(v->openAttachment(attachment));
         }else if(type.startsWith("video/") && name.startsWith("video_circle.")){
             showVideoCircle(attachment);
+        }else if(type.startsWith("audio/")){
+            LinearLayout voice=new LinearLayout(this);
+            voice.setOrientation(LinearLayout.HORIZONTAL);
+            voice.setGravity(Gravity.CENTER_VERTICAL);
+            voice.setPadding(dp(12),dp(9),dp(12),dp(9));
+            voice.setBackground(shape(PANEL));
+            TextView play=label(requestedVoiceID==id?"❚❚":"▶",27,FG);
+            play.setGravity(Gravity.CENTER);
+            voice.addView(play,new LinearLayout.LayoutParams(dp(44),dp(48)));
+            LinearLayout bars=new LinearLayout(this);
+            bars.setGravity(Gravity.CENTER_VERTICAL);
+            for(int i=0;i<29;i++){
+                View bar=new View(this);
+                bar.setBackgroundColor(0xffcccccc);
+                LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(dp(3),dp(5+(i*17+i*i*3)%22));
+                bp.setMargins(dp(1),0,dp(1),0);
+                bars.addView(bar,bp);
+            }
+            voice.addView(bars);
+            LinearLayout.LayoutParams vlp=new LinearLayout.LayoutParams(-2,-2);
+            vlp.setMargins(0,dp(4),0,dp(9));
+            messages.addView(voice,vlp);
+            voice.setOnClickListener(v->{
+                playVoice(attachment);
+                play.setText(requestedVoiceID==id?"❚❚":"▶");
+            });
         }else{
-            TextView file=bubble((type.startsWith("audio/")?"Голосовое сообщение":type.startsWith("video/")?"Видеосообщение":name)+"\nНажми, чтобы открыть");
-            messages.addView(file);file.setOnClickListener(v->{if(type.startsWith("audio/"))playVoice(attachment);else openAttachment(attachment);});
+            TextView file=bubble((type.startsWith("video/")?"Видеосообщение":name)+"\nНажми, чтобы открыть");
+            messages.addView(file);file.setOnClickListener(v->openAttachment(attachment));
         }
     }
     void showVideoCircle(JSONObject attachment){

@@ -788,7 +788,7 @@ struct ChatView: View {
                                     }
                                 }
                                 .padding(message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true ? 0 : 11)
-                                .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) ? Color.clear : (message.sender_id == store.me?.id ? white.opacity(0.21) : white.opacity(0.08)),in:RoundedRectangle(cornerRadius:17))
+                                .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) ? Color.clear : (message.sender_id == store.me?.id ? glassBlue.opacity(0.25) : white.opacity(0.10)),in:RoundedRectangle(cornerRadius:20))
                                 .contextMenu {
                                     if message.deleted == 0 {
                                         Button("Ответить",systemImage:"arrowshape.turn.up.left") { reply=message }
@@ -890,9 +890,13 @@ struct ChatView: View {
                     .accessibilityLabel(recordingModeVideo ? "Видеокружок, удерживайте для записи" : "Голосовое сообщение, удерживайте для записи")
                     .allowsHitTesting(!uploading)
                 }
-            }.padding(12).background(ink)
+            }
+            .padding(.horizontal,12).padding(.vertical,9)
+            .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:30))
+            .overlay(RoundedRectangle(cornerRadius:30).stroke(.white.opacity(0.16)))
+            .padding(.horizontal,8).padding(.bottom,5)
         }
-        .background(ink)
+        .background(NightwellBackground())
         .navigationTitle(chat.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

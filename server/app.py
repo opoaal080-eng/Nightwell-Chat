@@ -503,12 +503,15 @@ def search_by_phone(phone:str=Query(min_length=8,max_length=35),user=Depends(cur
 
 
 # Attachments are stored outside the web root and require bearer auth on every read.
-MAX_FILE_SIZE = 15 * 1024 * 1024
+MAX_FILE_SIZE = 50 * 1024 * 1024
 MAX_AVATAR_SIZE = 6 * 1024 * 1024
 ALLOWED_SUFFIXES = {".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png",
     ".webp":"image/webp", ".gif":"image/gif", ".pdf":"application/pdf",
     ".txt":"text/plain", ".zip":"application/zip", ".docx":"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+    ".xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".m4a":"audio/mp4", ".aac":"audio/aac", ".mp3":"audio/mpeg", ".ogg":"audio/ogg",
+    ".opus":"audio/ogg", ".wav":"audio/wav", ".mp4":"video/mp4", ".mov":"video/quicktime",
+    ".webm":"video/webm", ".mkv":"video/x-matroska", ".pptx":"application/vnd.openxmlformats-officedocument.presentationml.presentation"}
 
 def attachment_view(c, mid: int):
     row = c.execute("SELECT id,filename,content_type,byte_size FROM attachments WHERE message_id=?", (mid,)).fetchone()

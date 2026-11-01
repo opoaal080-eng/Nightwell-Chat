@@ -545,6 +545,13 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         if !device.hasTorch {torchEnabled=false}
         updateFlashIcon()
         session.commitConfiguration()
+        // Lock capture and preview to portrait independently of device rotation.
+        if let connection=output.connection(with:.video),connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+        if let connection=preview.connection,connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
         DispatchQueue.global(qos:.userInitiated).async {[weak self] in
             guard let self else{return}
             self.session.startRunning()
@@ -588,6 +595,9 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     @objc private func toggleRecording(){
         if output.isRecording {output.stopRecording();return}
         let url=FileManager.default.temporaryDirectory.appendingPathComponent("circle_\(UUID().uuidString).mov")
+        if let connection=output.connection(with:.video),connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
         output.startRecording(to:url,recordingDelegate:self)
         if stopWhenReady {
             DispatchQueue.main.asyncAfter(deadline:.now()+0.35) { [weak self] in
@@ -637,6 +647,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             let range=CMTimeRange(start:.zero,duration:asset.duration)
             do {
                 try videoTrack.insertTimeRange(range,of:source,at:cursor)
+                if cursor == .zero { videoTrack.preferredTransform = source.preferredTransform }
                 if let audio=asset.tracks(withMediaType:.audio).first {
                     try? audioTrack?.insertTimeRange(range,of:audio,at:cursor)
                 }

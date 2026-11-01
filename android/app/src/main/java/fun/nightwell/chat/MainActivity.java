@@ -39,6 +39,8 @@ public final class MainActivity extends Activity {
     MediaRecorder voiceRecorder;
     File voiceFile;
     long voiceStartedAt=0;
+    final Handler voiceHandler=new Handler(Looper.getMainLooper());
+    final Runnable voiceTimeout=()->{if(voiceRecorder!=null)finishVoice();};
     final Runnable refresh=new Runnable(){ @Override public void run(){
         if("chat".equals(screen))loadMessages(false);
         else if("inbox".equals(screen)){loadChats();checkIncoming();}
@@ -258,10 +260,12 @@ public final class MainActivity extends Activity {
             voiceRecorder.prepare();
             voiceRecorder.start();
             voiceStartedAt=System.currentTimeMillis();
+            voiceHandler.postDelayed(voiceTimeout,120000);
             note("Запись началась. Нажми ещё раз, чтобы отправить.");
-        }catch(Exception e){note("Ошибка микрофона: "+e.getMessage());releaseVoice();}
+        }catch(Exception e){note("Ошибка микрофона: "+e.getMessage());cancelVoice();}
     }
     void releaseVoice(){
+        voiceHandler.removeCallbacks(voiceTimeout);
         if(voiceRecorder!=null){try{voiceRecorder.release();}catch(Exception ignored){} voiceRecorder=null;}
     }
     void cancelVoice(){
@@ -290,7 +294,7 @@ public final class MainActivity extends Activity {
                 try{return multipart("/chats/"+cid+"/attachments","voice.m4a","audio/mp4",bytes);}
                 finally{recorded.delete();}
             },result->loadMessages(true));
-        }catch(Exception e){note("Не удалось завершить запись: "+e.getMessage());releaseVoice();}
+        }catch(Exception e){note("Не удалось завершить запись: "+e.getMessage());cancelVoice();}
     }
     void loadMessages(boolean scroll){if(loading||!"chat".equals(screen))return;loading=true;int cid=chatId;
         perform(()->http("/chats/"+cid+"/messages","GET",null),b->{

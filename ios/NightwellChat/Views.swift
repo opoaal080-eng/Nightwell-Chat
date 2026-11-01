@@ -395,30 +395,121 @@ struct VideoCircleBubble:View {
     }
 }
 
-struct VideoCircleRecorder: UIViewControllerRepresentable {
-    let onVideo: (URL) -> Void
-    @Environment(\.dismiss) private var dismiss
-    func makeCoordinator() -> Coordinator { Coordinator(parent:self) }
-    func makeUIViewController(context:Context)->UIImagePickerController {
-        let picker=UIImagePickerController()
-        picker.sourceType = .camera
-        picker.mediaTypes = ["public.movie"]
-        picker.cameraCaptureMode = .video
-        picker.videoMaximumDuration = 60
-        picker.videoQuality = .typeMedium
-        picker.delegate = context.coordinator
-        return picker
-    }
-    func updateUIViewController(_ picker:UIImagePickerController,context:Context){}
-    final class Coordinator:NSObject,UIImagePickerControllerDelegate,UINavigationControllerDelegate {
-        let parent:VideoCircleRecorder
-        init(parent:VideoCircleRecorder){self.parent=parent}
-        func imagePickerControllerDidCancel(_ picker:UIImagePickerController){parent.dismiss()}
-        func imagePickerController(_ picker:UIImagePickerController,didFinishPickingMediaWithInfo info:[UIImagePickerController.InfoKey:Any]){
-            if let url=info[.mediaURL] as? URL {parent.onVideo(url)}
-            parent.dismiss()
+final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecordingDelegate {
+    var onVideo:((URL)->Void)?
+    private let session=AVCaptureSession()
+    private let output=AVCaptureMovieFileOutput()
+    private let preview=AVCaptureVideoPreviewLayer()
+    private let record=UIButton(type:.system)
+    private let flip=UIButton(type:.system)
+    private let timer=UILabel()
+    private var cameraPosition:AVCaptureDevice.Position = .front
+    private var started:Date?
+    private var ticker:Timer?
+    override func viewDidLoad(){
+        super.viewDidLoad()
+        view.backgroundColor=.black
+        preview.session=session
+        preview.videoGravity=.resizeAspectFill
+        view.layer.addSublayer(preview)
+        let close=UIButton(type:.system)
+        close.setTitle("Отмена",for:.normal)
+        close.setTitleColor(.white,for:.normal)
+        close.addTarget(self,action:#selector(cancel),for:.touchUpInside)
+        view.addSubview(close)
+        close.frame=CGRect(x:20,y:60,width:90,height:44)
+        flip.setTitle("⟳",for:.normal)
+        flip.titleLabel?.font=.systemFont(ofSize:32)
+        flip.tintColor=.white
+        flip.addTarget(self,action:#selector(switchCamera),for:.touchUpInside)
+        view.addSubview(flip)
+        record.backgroundColor=.white
+        record.layer.borderColor=UIColor.systemRed.cgColor
+        record.layer.borderWidth=5
+        record.addTarget(self,action:#selector(toggleRecording),for:.touchUpInside)
+        view.addSubview(record)
+        timer.textColor=.white
+        timer.textAlignment = .center
+        timer.font = .monospacedDigitSystemFont(ofSize:18,weight:.medium)
+        timer.text="00:00 / 01:00"
+        view.addSubview(timer)
+        AVCaptureDevice.requestAccess(for:.video){[weak self] granted in
+            guard granted else{return}
+            AVCaptureDevice.requestAccess(for:.audio){_ in
+                DispatchQueue.main.async {self?.configure()}
+            }
         }
     }
+    override func viewDidLayoutSubviews(){
+        super.viewDidLayoutSubviews()
+        let side=min(view.bounds.width-44,360.0)
+        let y=(view.bounds.height-side)/2-50
+        preview.frame=CGRect(x:(view.bounds.width-side)/2,y:y,width:side,height:side)
+        preview.cornerRadius=side/2
+        preview.masksToBounds=true
+        record.frame=CGRect(x:(view.bounds.width-76)/2,y:y+side+42,width:76,height:76)
+        record.layer.cornerRadius=38
+        flip.frame=CGRect(x:view.bounds.width-88,y:y+side+54,width:60,height:54)
+        timer.frame=CGRect(x:0,y:y-44,width:view.bounds.width,height:30)
+    }
+    private func configure(){
+        session.beginConfiguration()
+        session.sessionPreset = .medium
+        for input in session.inputs {session.removeInput(input)}
+        guard let device=AVCaptureDevice.default(.builtInWideAngleCamera,for:.video,position:cameraPosition),
+              let input=try? AVCaptureDeviceInput(device:device),session.canAddInput(input) else {
+            session.commitConfiguration();return
+        }
+        session.addInput(input)
+        if !session.outputs.contains(output) && session.canAddOutput(output){session.addOutput(output)}
+        if let mic=AVCaptureDevice.default(for:.audio),let audio=try? AVCaptureDeviceInput(device:mic),session.canAddInput(audio){
+            session.addInput(audio)
+        }
+        output.maxRecordedDuration=CMTime(seconds:60,preferredTimescale:600)
+        session.commitConfiguration()
+        DispatchQueue.global(qos:.userInitiated).async {[weak self] in self?.session.startRunning()}
+    }
+    @objc private func switchCamera(){
+        guard !output.isRecording else{return}
+        cameraPosition=cameraPosition == .front ? .back : .front
+        DispatchQueue.global(qos:.userInitiated).async {[weak self] in
+            DispatchQueue.main.async {self?.configure()}
+        }
+    }
+    @objc private func toggleRecording(){
+        if output.isRecording {output.stopRecording();return}
+        let url=FileManager.default.temporaryDirectory.appendingPathComponent("circle_\(UUID().uuidString).mov")
+        output.startRecording(to:url,recordingDelegate:self)
+        started=Date()
+        record.backgroundColor = .systemRed
+        ticker?.invalidate()
+        ticker=Timer.scheduledTimer(withTimeInterval:0.2,repeats:true){[weak self] _ in
+            guard let self,let started=self.started else{return}
+            let elapsed=min(60,Int(Date().timeIntervalSince(started)))
+            self.timer.text=String(format:"%02d:%02d / 01:00",elapsed/60,elapsed%60)
+        }
+    }
+    @objc private func cancel(){
+        ticker?.invalidate()
+        if output.isRecording {output.stopRecording();onVideo=nil}
+        session.stopRunning()
+        dismiss(animated:true)
+    }
+    func fileOutput(_ output:AVCaptureFileOutput,didFinishRecordingTo url:URL,from connections:[AVCaptureConnection],error:Error?){
+        ticker?.invalidate()
+        session.stopRunning()
+        if error == nil {onVideo?(url)}
+        dismiss(animated:true)
+    }
+}
+struct VideoCircleRecorder:UIViewControllerRepresentable {
+    let onVideo:(URL)->Void
+    func makeUIViewController(context:Context)->CircleCaptureController {
+        let controller=CircleCaptureController()
+        controller.onVideo=onVideo
+        return controller
+    }
+    func updateUIViewController(_ controller:CircleCaptureController,context:Context){}
 }
 
 struct ChatView: View {

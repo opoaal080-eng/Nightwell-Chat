@@ -10,6 +10,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.media.MediaRecorder;
+import android.media.MediaPlayer;
 import android.os.*;
 import android.provider.ContactsContract;
 import android.provider.OpenableColumns;
@@ -40,6 +41,7 @@ public final class MainActivity extends Activity {
     MediaRecorder voiceRecorder;
     File voiceFile;
     Button voiceButton;
+    MediaPlayer voicePlayer;
     long voiceStartedAt=0;
     final Handler voiceHandler=new Handler(Looper.getMainLooper());
     final Runnable voiceTimeout=()->{if(voiceRecorder!=null)finishVoice();};
@@ -60,12 +62,13 @@ public final class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);
         if(token.isEmpty())phoneLogin(false); else getMe(false);
     }
-    @Override protected void onDestroy(){cancelVoice();handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){stopVoicePlayback();cancelVoice();handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
 
     int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
     GradientDrawable shape(int color){GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(dp(14));g.setStroke(dp(1),0xff333333);return g;}
     TextView label(String str,int size,int color){TextView t=new TextView(this);t.setText(str);t.setTextSize(size);t.setTextColor(color);t.setPadding(dp(3),dp(5),dp(3),dp(5));return t;}
     void enter(String dest){
+        stopVoicePlayback();
         if(voiceRecorder!=null && !"chat".equals(dest))cancelVoice();
         screen=dest;handler.removeCallbacks(refresh);
         scroller=new ScrollView(this);scroller.setFillViewport(true);
@@ -341,8 +344,31 @@ public final class MainActivity extends Activity {
             image.setOnClickListener(v->openAttachment(attachment));
         }else{
             TextView file=bubble((type.startsWith("audio/")?"Голосовое сообщение":type.startsWith("video/")?"Видеосообщение":name)+"\nНажми, чтобы открыть");
-            messages.addView(file);file.setOnClickListener(v->openAttachment(attachment));
+            messages.addView(file);file.setOnClickListener(v->{if(type.startsWith("audio/"))playVoice(attachment);else openAttachment(attachment);});
         }
+    }
+    void stopVoicePlayback(){
+        if(voicePlayer!=null){
+            try{voicePlayer.stop();}catch(Exception ignored){}
+            voicePlayer.release();
+            voicePlayer=null;
+        }
+    }
+    void playVoice(JSONObject attachment){
+        int id=attachment.optInt("id");
+        stopVoicePlayback();
+        perform(()->http("/attachments/"+id,"GET",null),bytes->{
+            File temp=new File(getCacheDir(),"voice_playback_"+id+".m4a");
+            try(FileOutputStream output=new FileOutputStream(temp)){output.write(bytes);}
+            try{
+                MediaPlayer player=new MediaPlayer();
+                player.setDataSource(temp.getAbsolutePath());
+                player.setOnCompletionListener(p->stopVoicePlayback());
+                player.prepare();
+                voicePlayer=player;
+                player.start();
+            }catch(Exception e){stopVoicePlayback();note("Не удалось воспроизвести голосовое");}
+        });
     }
     void openAttachment(JSONObject attachment){
         int id=attachment.optInt("id");String mime=attachment.optString("content_type","application/octet-stream");

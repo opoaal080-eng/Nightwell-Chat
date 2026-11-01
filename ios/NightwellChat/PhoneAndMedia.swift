@@ -122,8 +122,8 @@ struct EditProfileView: View {
                         img.draw(in:CGRect(x:0,y:0,width:512,height:512))
                     }
                 }
-                await store.updateAvatar(jpg)
-                if store.alertText.isEmpty {avatarPreview=UIImage(data:jpg)}
+                let saved=await store.updateAvatar(jpg)
+                if saved {avatarPreview=UIImage(data:jpg)}
             }
         }
     }

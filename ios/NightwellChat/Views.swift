@@ -208,18 +208,18 @@ struct InboxView: View {
                     Button {calls=true} label:{
                         Label("Звонки",systemImage:"phone.fill")
                     }
-                    Button {} label:{
-                        Label("Чаты",systemImage:"bubble.left.and.bubble.right.fill")
-                    }
+                    Image(systemName:"bubble.left.and.bubble.right.fill")
+                        .foregroundStyle(.white)
+                        .frame(maxWidth:.infinity)
                     Button {settings=true} label:{
                         Label("Настройки",systemImage:"gearshape.fill")
                     }
                 }
-                .font(.system(size:11,weight:.medium))
-                .labelStyle(.titleAndIcon)
+                .font(.system(size:23,weight:.medium))
+                .labelStyle(.iconOnly)
                 .buttonStyle(.plain)
                 .frame(maxWidth:.infinity)
-                .padding(.vertical,18).padding(.horizontal,8)
+                .padding(.vertical,13).padding(.horizontal,8)
                 .background(.ultraThinMaterial,in:Capsule())
                 .overlay(Capsule().stroke(.white.opacity(0.12),lineWidth:1))
                 .padding(.horizontal,16).padding(.bottom,8)
@@ -691,6 +691,7 @@ struct ChatView: View {
     @State private var stopCircleRequested=false
     @State private var mediaPressing=false
     @State private var mediaLongPress=false
+    @State private var mediaHoldStarted=false
     @State private var showingVideoRecorder=false
     @State private var preview:URL?
     @State private var audioPlayer: AVPlayer?
@@ -745,9 +746,11 @@ struct ChatView: View {
                                             }
                                         }.buttonStyle(.plain)
                                     }
-                                    Text(message.deleted != 0 ? "Сообщение удалено" : message.body)
+                                    if message.deleted != 0 || !message.body.isEmpty {
+                                        Text(message.deleted != 0 ? "Сообщение удалено" : message.body)
                                         .foregroundStyle(message.deleted != 0 ? muted : white)
                                         .font(.body)
+                                    }
                                     HStack(spacing:6) {
                                         if message.edited_at != nil { Text("изм.") }
                                         Text(message.created_at.count >= 16 ? String(message.created_at.suffix(from:message.created_at.index(message.created_at.startIndex,offsetBy:11)).prefix(5)) : "")
@@ -759,8 +762,8 @@ struct ChatView: View {
                                         } }
                                     }
                                 }
-                                .padding(11)
-                                .background(message.sender_id == store.me?.id ? white.opacity(0.21) : white.opacity(0.08),in:RoundedRectangle(cornerRadius:17))
+                                .padding(message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true ? 0 : 11)
+                                .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) ? Color.clear : (message.sender_id == store.me?.id ? white.opacity(0.21) : white.opacity(0.08)),in:RoundedRectangle(cornerRadius:17))
                                 .contextMenu {
                                     if message.deleted == 0 {
                                         Button("Ответить",systemImage:"arrowshape.turn.up.left") { reply=message }
@@ -1067,4 +1070,49 @@ final class NightwellVoiceRecorder: NSObject, ObservableObject {
         recordingURL = nil
         isRecording = false
     }
-}
+}                    Image(systemName:recordingModeVideo ? "video.circle.fill" : (voiceRecorder.isRecording ? "stop.circle.fill" : "mic.fill"))
+                        .font(.title2).frame(width:42,height:42)
+                        .contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance:0)
+                            .onChanged { _ in
+                                if !mediaPressing {
+                                    mediaPressing=true
+                                    mediaHoldStarted=false
+                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.38) {
+                                        if mediaPressing && !uploading {
+                                            mediaHoldStarted=true
+                                            if recordingModeVideo {
+                                                startCircleImmediately=true
+                                                stopCircleRequested=false
+                                                showingVideoRecorder=true
+                                            } else {
+                                                Task {await voiceRecorder.start()
+                                                    if let error=voiceRecorder.errorMessage {store.alertText=error}
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            .onEnded { _ in
+                                mediaPressing=false
+                                if mediaHoldStarted {
+                                    if recordingModeVideo {
+                                        stopCircleRequested=true
+                                    } else {
+                                        Task {
+                                            if let file=voiceRecorder.finish(),let data=try? Data(contentsOf:file) {
+                                                uploading=true
+                                                let success=await store.sendFile(chatID:chat.id,bytes:data,filename:"voice.m4a",mime:"audio/mp4")
+                                                try? FileManager.default.removeItem(at:file)
+                                                if success {await reload()}
+                                                uploading=false
+                                            }
+                                        }
+                                    }
+                                    mediaHoldStarted=false
+                                } else {
+                                    recordingModeVideo.toggle()
+                                }
+                            })
+

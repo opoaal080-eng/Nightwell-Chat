@@ -407,6 +407,11 @@ struct VideoCircleBubble:View {
 final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecordingDelegate {
     var onVideo:((URL)->Void)?
     var onClose:(()->Void)?
+    var autoStart=false
+    private var pendingStart=false
+    private var segments:[URL]=[]
+    private var switching=false
+    private var cancelled=false
     private let session=AVCaptureSession()
     private let output=AVCaptureMovieFileOutput()
     private let preview=AVCaptureVideoPreviewLayer()
@@ -477,12 +482,25 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         }
         output.maxRecordedDuration=CMTime(seconds:60,preferredTimescale:600)
         session.commitConfiguration()
-        DispatchQueue.global(qos:.userInitiated).async {[weak self] in self?.session.startRunning()}
+        DispatchQueue.global(qos:.userInitiated).async {[weak self] in
+            guard let self else{return}
+            self.session.startRunning()
+            DispatchQueue.main.async {
+                if self.autoStart && !self.output.isRecording && self.segments.isEmpty {
+                    self.autoStart=false
+                    self.toggleRecording()
+                }
+            }
+        }
     }
     @objc private func switchCamera(){
-        guard !output.isRecording else{return}
-        cameraPosition=cameraPosition == .front ? .back : .front
-        configure()
+        if output.isRecording {
+            switching=true
+            output.stopRecording()
+        } else {
+            cameraPosition=cameraPosition == .front ? .back : .front
+            configure()
+        }
     }
     @objc private func toggleRecording(){
         if output.isRecording {output.stopRecording();return}
@@ -498,25 +516,88 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         }
     }
     @objc private func cancel(){
+        cancelled=true
         ticker?.invalidate()
-        if output.isRecording {output.stopRecording();onVideo=nil}
+        if output.isRecording {
+            output.stopRecording()
+        } else {
+            cleanup()
+            onClose?()
+        }
+    }
+    private func cleanup(){
         DispatchQueue.global(qos:.userInitiated).async {[weak self] in self?.session.stopRunning()}
-        onClose?()
+    }
+    private func finishSegments(){
+        let clips=segments
+        guard !clips.isEmpty else {onClose?();return}
+        if clips.count == 1 {
+            onVideo?(clips[0])
+            onClose?()
+            return
+        }
+        let composition=AVMutableComposition()
+        guard let videoTrack=composition.addMutableTrack(withMediaType:.video,preferredTrackID:kCMPersistentTrackID_Invalid) else {
+            onClose?();return
+        }
+        let audioTrack=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid)
+        var cursor=CMTime.zero
+        for url in clips {
+            let asset=AVURLAsset(url:url)
+            guard let source=asset.tracks(withMediaType:.video).first else {continue}
+            let range=CMTimeRange(start:.zero,duration:asset.duration)
+            do {
+                try videoTrack.insertTimeRange(range,of:source,at:cursor)
+                if let audio=asset.tracks(withMediaType:.audio).first {
+                    try? audioTrack?.insertTimeRange(range,of:audio,at:cursor)
+                }
+                cursor=CMTimeAdd(cursor,asset.duration)
+            } catch {continue}
+        }
+        let result=FileManager.default.temporaryDirectory.appendingPathComponent("video_circle_\(UUID().uuidString).mov")
+        guard let exporter=AVAssetExportSession(asset:composition,presetName:AVAssetExportPresetHighestQuality) else {
+            onClose?();return
+        }
+        exporter.outputURL=result
+        exporter.outputFileType=.mov
+        exporter.exportAsynchronously { [weak self] in
+            DispatchQueue.main.async {
+                if exporter.status == .completed {self?.onVideo?(result)}
+                self?.onClose?()
+            }
+        }
     }
     func fileOutput(_ output:AVCaptureFileOutput,didFinishRecordingTo url:URL,from connections:[AVCaptureConnection],error:Error?){
+        if error == nil && !cancelled {segments.append(url)}
+        if cancelled {
+            cleanup()
+            onClose?()
+            return
+        }
+        if switching {
+            switching=false
+            cameraPosition=cameraPosition == .front ? .back : .front
+            configure()
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.45) { [weak self] in
+                guard let self else{return}
+                self.toggleRecording()
+            }
+            return
+        }
         ticker?.invalidate()
-        DispatchQueue.global(qos:.userInitiated).async {[weak self] in self?.session.stopRunning()}
-        if error == nil {onVideo?(url)}
-        onClose?()
+        cleanup()
+        finishSegments()
     }
 }
 struct VideoCircleRecorder:UIViewControllerRepresentable {
     let onVideo:(URL)->Void
     let onClose:()->Void
+    var autoStart=false
     func makeUIViewController(context:Context)->CircleCaptureController {
         let controller=CircleCaptureController()
         controller.onVideo=onVideo
         controller.onClose=onClose
+        controller.autoStart=autoStart
         return controller
     }
     func updateUIViewController(_ controller:CircleCaptureController,context:Context){}
@@ -538,6 +619,7 @@ struct ChatView: View {
     @State private var showingFilePicker=false
     @State private var showingPhotoPicker=false
     @State private var recordingModeVideo=false
+    @State private var startCircleImmediately=false
     @State private var showingVideoRecorder=false
     @State private var preview:URL?
     @State private var audioPlayer: AVPlayer?
@@ -664,6 +746,7 @@ struct ChatView: View {
                 } else {
                     Button {
                         if recordingModeVideo {
+                            startCircleImmediately=false
                             showingVideoRecorder=true
                         } else {
                             Task {
@@ -686,6 +769,12 @@ struct ChatView: View {
                             .font(.title2).frame(width:42,height:42)
                     }
                     .simultaneousGesture(TapGesture(count:2).onEnded {recordingModeVideo.toggle()})
+                    .simultaneousGesture(LongPressGesture(minimumDuration:0.45).onEnded { _ in
+                        if recordingModeVideo {
+                            startCircleImmediately=true
+                            showingVideoRecorder=true
+                        }
+                    })
                     .disabled(uploading)
                 }
             }.padding(12).background(ink)
@@ -724,7 +813,7 @@ struct ChatView: View {
                     if success {await reload()}
                     uploading=false
                 }
-            }, onClose: { showingVideoRecorder=false }).ignoresSafeArea()
+            }, onClose: { showingVideoRecorder=false }, autoStart:startCircleImmediately).ignoresSafeArea()
         }
         .photosPicker(isPresented:$showingPhotoPicker,selection:$pickedPhoto,matching:.images)
         .fileImporter(isPresented:$showingFilePicker,allowedContentTypes:[.item]){

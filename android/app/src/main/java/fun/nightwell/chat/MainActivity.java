@@ -440,7 +440,7 @@ public final class MainActivity extends Activity {
             byte[] data=read(getContentResolver().openInputStream(uri),50*1024*1024);
             String mime=getContentResolver().getType(uri);
             if(mime==null||!mime.startsWith("video/"))mime="video/mp4";
-            String extension="video/3gpp".equals(mime)?"3gp":("video/quicktime".equals(mime)?"mov":"mp4");
+            String extension="video/3gpp".equals(mime)?"3gp":("video/quicktime".equals(mime)?"mov":("video/webm".equals(mime)?"webm":"mp4"));
             return multipart("/chats/"+cid+"/attachments","video_message."+extension,mime,data);
         },result->loadMessages(true));
     }

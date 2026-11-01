@@ -38,6 +38,7 @@ public final class MainActivity extends Activity {
     boolean loading=false;
     MediaRecorder voiceRecorder;
     File voiceFile;
+    Button voiceButton;
     long voiceStartedAt=0;
     final Handler voiceHandler=new Handler(Looper.getMainLooper());
     final Runnable voiceTimeout=()->{if(voiceRecorder!=null)finishVoice();};
@@ -235,7 +236,13 @@ public final class MainActivity extends Activity {
         btn("Отправить",()->{String msg=draft.getText().toString().trim();if(msg.isEmpty())return;
             int cid=chatId;perform(()->http("/chats/"+cid+"/messages","POST",payload("body",msg)),b->{draft.setText("");loadMessages(true);});
         });
-        btn("Голосовое сообщение",()->{
+        voiceButton=new Button(this);
+        voiceButton.setAllCaps(false);
+        voiceButton.setText("🎤 Записать голосовое");
+        voiceButton.setTextColor(FG);
+        voiceButton.setBackground(shape(PANEL));
+        page.addView(voiceButton,new LinearLayout.LayoutParams(-1,dp(48)));
+        voiceButton.setOnClickListener(v->{
             if(voiceRecorder!=null)finishVoice();
             else if(Build.VERSION.SDK_INT>=23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)
                 requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},102);
@@ -261,11 +268,13 @@ public final class MainActivity extends Activity {
             voiceRecorder.start();
             voiceStartedAt=System.currentTimeMillis();
             voiceHandler.postDelayed(voiceTimeout,120000);
+            if(voiceButton!=null)voiceButton.setText("■ Отправить голосовое");
             note("Запись началась. Нажми ещё раз, чтобы отправить.");
         }catch(Exception e){note("Ошибка микрофона: "+e.getMessage());cancelVoice();}
     }
     void releaseVoice(){
         voiceHandler.removeCallbacks(voiceTimeout);
+        if(voiceButton!=null)voiceButton.setText("🎤 Записать голосовое");
         if(voiceRecorder!=null){try{voiceRecorder.release();}catch(Exception ignored){} voiceRecorder=null;}
     }
     void cancelVoice(){

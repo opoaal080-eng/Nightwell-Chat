@@ -236,14 +236,18 @@ enum NetworkError: LocalizedError {
         eventVersion += 1
     }
     func loadAvatar(_ id:Int) async -> Data? { try? await authorizedData("/users/\(id)/avatar") }
-    func updateAvatar(_ bytes:Data) async {
+    @discardableResult func updateAvatar(_ bytes:Data) async -> Bool {
         do {
             try await upload(bytes,to:"/me/avatar",filename:"avatar.jpg",mime:"image/jpeg")
-            me = try await request("/me")
+            let refreshed:Person = try await request("/me")
+            guard refreshed.has_avatar == true else {throw NetworkError.server("Сервер не подтвердил сохранение аватарки")}
+            guard await loadAvatar(refreshed.id) != nil else {throw NetworkError.server("Аватарка загружена, но сервер не отдаёт её обратно")}
+            me=refreshed
             eventVersion += 1
             alertText = ""
+            return true
         }
-        catch { alertText=error.localizedDescription }
+        catch { alertText=error.localizedDescription;return false }
     }
     @discardableResult func sendFile(chatID:Int,bytes:Data,filename:String,mime:String) async -> Bool {
         do { try await upload(bytes,to:"/chats/\(chatID)/attachments",filename:filename,mime:mime);return true }

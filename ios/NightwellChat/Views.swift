@@ -414,9 +414,9 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     private var ticker:Timer?
     override func viewDidLoad(){
         super.viewDidLoad()
-        view.backgroundColor=.black
+        view.backgroundColor = .black
         preview.session=session
-        preview.videoGravity=.resizeAspectFill
+        preview.videoGravity = .resizeAspectFill
         view.layer.addSublayer(preview)
         let close=UIButton(type:.system)
         close.setTitle("Отмена",for:.normal)
@@ -425,16 +425,16 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         view.addSubview(close)
         close.frame=CGRect(x:20,y:60,width:90,height:44)
         flip.setTitle("⟳",for:.normal)
-        flip.titleLabel?.font=.systemFont(ofSize:32)
-        flip.tintColor=.white
+        flip.titleLabel?.font = .systemFont(ofSize:32)
+        flip.tintColor = .white
         flip.addTarget(self,action:#selector(switchCamera),for:.touchUpInside)
         view.addSubview(flip)
-        record.backgroundColor=.white
+        record.backgroundColor = .white
         record.layer.borderColor=UIColor.systemRed.cgColor
         record.layer.borderWidth=5
         record.addTarget(self,action:#selector(toggleRecording),for:.touchUpInside)
         view.addSubview(record)
-        timer.textColor=.white
+        timer.textColor = .white
         timer.textAlignment = .center
         timer.font = .monospacedDigitSystemFont(ofSize:18,weight:.medium)
         timer.text="00:00 / 01:00"

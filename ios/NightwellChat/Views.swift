@@ -349,6 +349,10 @@ struct ChatView: View {
                                         } label: {
                                             if file.content_type.hasPrefix("image/"){
                                                 PrivateImage(attachment:file.id)
+                                            } else if file.content_type.hasPrefix("audio/") {
+                                                Label("Голосовое сообщение",systemImage:"waveform")
+                                            } else if file.content_type.hasPrefix("video/") {
+                                                Label("Видеосообщение",systemImage:"play.rectangle.fill")
                                             } else {
                                                 Label(file.filename,systemImage:"doc.fill")
                                             }

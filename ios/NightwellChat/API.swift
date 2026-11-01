@@ -237,7 +237,12 @@ enum NetworkError: LocalizedError {
     }
     func loadAvatar(_ id:Int) async -> Data? { try? await authorizedData("/users/\(id)/avatar") }
     func updateAvatar(_ bytes:Data) async {
-        do { try await upload(bytes,to:"/me/avatar",filename:"avatar.jpg",mime:"image/jpeg");me = try await request("/me") }
+        do {
+            try await upload(bytes,to:"/me/avatar",filename:"avatar.jpg",mime:"image/jpeg")
+            me = try await request("/me")
+            eventVersion += 1
+            alertText = ""
+        }
         catch { alertText=error.localizedDescription }
     }
     @discardableResult func sendFile(chatID:Int,bytes:Data,filename:String,mime:String) async -> Bool {

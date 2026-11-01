@@ -311,6 +311,38 @@ struct GroupView: View {
     }
 }
 
+struct VideoCircleBubble:View {
+    @EnvironmentObject var store:ChatStore
+    let file:ChatAttachment
+    @State private var player:AVPlayer?
+    var body:some View {
+        ZStack {
+            Circle().fill(.white.opacity(0.12))
+            if let player {
+                VideoPlayer(player:player).clipShape(Circle())
+            } else {
+                Image(systemName:"play.circle.fill")
+                    .font(.system(size:44)).foregroundStyle(.white)
+            }
+        }
+        .frame(width:190,height:190)
+        .clipShape(Circle())
+        .onTapGesture {
+            Task {
+                if let player {
+                    player.pause()
+                    self.player=nil
+                } else if let url=await store.downloadFile(file) {
+                    let newPlayer=AVPlayer(url:url)
+                    player=newPlayer
+                    newPlayer.play()
+                }
+            }
+        }
+        .onDisappear {player?.pause();player=nil}
+    }
+}
+
 struct VideoCircleRecorder: UIViewControllerRepresentable {
     let onVideo: (URL) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -373,7 +405,9 @@ struct ChatView: View {
                                     if chat.kind == "group" && message.sender_id != store.me?.id {
                                         Text(message.sender_name).font(.caption.bold()).foregroundStyle(muted)
                                     }
-                                    if message.deleted == 0,let file=message.attachment {
+                                    if message.deleted == 0,let file=message.attachment, file.filename.hasPrefix("video_circle.") {
+                                        VideoCircleBubble(file:file)
+                                    } else if message.deleted == 0,let file=message.attachment {
                                         Button {
                                             Task {
                                                 if file.content_type.hasPrefix("audio/") {

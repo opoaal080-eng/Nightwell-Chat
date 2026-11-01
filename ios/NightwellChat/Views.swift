@@ -620,8 +620,8 @@ struct ChatView: View {
                         return
                     }
                     uploading=true
-                    await store.sendFile(chatID:chat.id,bytes:data,filename:"video_circle.mov",mime:"video/quicktime")
-                    await reload()
+                    let success=await store.sendFile(chatID:chat.id,bytes:data,filename:"video_circle.mov",mime:"video/quicktime")
+                    if success {await reload()}
                     uploading=false
                 }
             }.ignoresSafeArea()
@@ -636,8 +636,8 @@ struct ChatView: View {
                     store.alertText="Размер файла не должен превышать 50 МБ";return
                 }
                 uploading=true
-                await store.sendFile(chatID:chat.id,bytes:data,filename:file.lastPathComponent,mime:"application/octet-stream")
-                await reload()
+                let success=await store.sendFile(chatID:chat.id,bytes:data,filename:file.lastPathComponent,mime:UTType(filenameExtension:file.pathExtension)?.preferredMIMEType ?? "application/octet-stream")
+                if success {await reload()}
                 uploading=false
             }
         }
@@ -646,9 +646,9 @@ struct ChatView: View {
                 guard let data=try? await item?.loadTransferable(type:Data.self),
                     let image=UIImage(data:data),let jpg=image.jpegData(compressionQuality:0.86) else{return}
                 uploading=true
-                await store.sendFile(chatID:chat.id,bytes:jpg,filename:"photo.jpg",mime:"image/jpeg")
+                let success=await store.sendFile(chatID:chat.id,bytes:jpg,filename:"photo.jpg",mime:"image/jpeg")
                 pickedPhoto=nil
-                await reload()
+                if success {await reload()}
                 uploading=false
             }
         }

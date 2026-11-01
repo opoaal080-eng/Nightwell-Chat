@@ -814,35 +814,53 @@ struct ChatView: View {
                             .foregroundStyle(.black).frame(width:42,height:42).background(.white,in:Circle())
                     }
                 } else {
-                    Button {
-                        recordingModeVideo.toggle()
-                    } label: {
-                        Image(systemName:recordingModeVideo ? "video.circle.fill" : "mic.fill")
-                            .font(.title2).frame(width:42,height:42)
-                    }
-                    .simultaneousGesture(LongPressGesture(minimumDuration:0.4).onEnded { _ in
-                        if recordingModeVideo {
-                            startCircleImmediately=true
-                            stopCircleRequested=false
-                            showingVideoRecorder=true
-                        } else {
-                            Task {
-                                if voiceRecorder.isRecording {
-                                    if let file=voiceRecorder.finish(),let data=try? Data(contentsOf:file) {
-                                        uploading=true
-                                        let success=await store.sendFile(chatID:chat.id,bytes:data,filename:"voice.m4a",mime:"audio/mp4")
-                                        try? FileManager.default.removeItem(at:file)
-                                        if success {await reload()}
-                                        uploading=false
+                    Image(systemName:voiceRecorder.isRecording ? "stop.circle.fill" : (recordingModeVideo ? "video.circle.fill" : "mic.fill"))
+                        .font(.title2).frame(width:42,height:42)
+                        .contentShape(Circle())
+                        .gesture(DragGesture(minimumDistance:0)
+                            .onChanged { _ in
+                                if !mediaPressing {
+                                    mediaPressing=true
+                                    mediaLongPress=false
+                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.35) {
+                                        guard mediaPressing && !uploading else{return}
+                                        mediaLongPress=true
+                                        if recordingModeVideo {
+                                            startCircleImmediately=true
+                                            stopCircleRequested=false
+                                            showingVideoRecorder=true
+                                        } else {
+                                            Task {await voiceRecorder.start()
+                                                if let error=voiceRecorder.errorMessage {store.alertText=error}
+                                            }
+                                        }
                                     }
-                                } else {
-                                    await voiceRecorder.start()
-                                    if let error=voiceRecorder.errorMessage {store.alertText=error}
                                 }
                             }
-                        }
-                    })
-                    .disabled(uploading)
+                            .onEnded { _ in
+                                mediaPressing=false
+                                if mediaLongPress {
+                                    mediaLongPress=false
+                                    if recordingModeVideo {
+                                        stopCircleRequested=true
+                                    } else {
+                                        Task {
+                                            try? await Task.sleep(nanoseconds:250_000_000)
+                                            if let file=voiceRecorder.finish(),let data=try? Data(contentsOf:file) {
+                                                uploading=true
+                                                let success=await store.sendFile(chatID:chat.id,bytes:data,filename:"voice.m4a",mime:"audio/mp4")
+                                                try? FileManager.default.removeItem(at:file)
+                                                if success {await reload()}
+                                                uploading=false
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    recordingModeVideo.toggle()
+                                }
+                            })
+                    .accessibilityLabel(recordingModeVideo ? "Видеокружок, удерживайте для записи" : "Голосовое сообщение, удерживайте для записи")
+                    .allowsHitTesting(!uploading)
                 }
             }.padding(12).background(ink)
         }

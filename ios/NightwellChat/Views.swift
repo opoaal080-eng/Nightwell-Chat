@@ -698,6 +698,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         }
     }
     func fileOutput(_ output:AVCaptureFileOutput,didFinishRecordingTo url:URL,from connections:[AVCaptureConnection],error:Error?){
+        DispatchQueue.main.async { [self] in
         let successful = error == nil || (error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool == true
         if successful && !cancelled {segments.append(url)}
         if cancelled {
@@ -714,6 +715,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         ticker?.invalidate()
         cleanup()
         finishSegments()
+        }
     }
 }
 struct VideoCircleRecorder:UIViewControllerRepresentable {
@@ -763,6 +765,8 @@ struct ChatView: View {
     @State private var audioPlayer: AVPlayer?
     @State private var playingAudioID: Int?
     @State private var audioEndObserver:NSObjectProtocol?
+    @State private var audioFailureObserver:NSObjectProtocol?
+    @State private var audioRequest=UUID()
     @State private var showingCall=false
     @State private var callURL:URL?
     var body: some View {
@@ -787,11 +791,13 @@ struct ChatView: View {
                                         Button {
                                             Task {
                                                 if file.content_type.hasPrefix("audio/") {
+                                                    let request=UUID();audioRequest=request
                                                     if playingAudioID == file.id {
                                                         audioPlayer?.pause()
                                                         audioPlayer = nil
                                                         playingAudioID = nil
                                                     } else if let url = await store.downloadFile(file) {
+                                                        guard request == audioRequest else{return}
                                                         audioPlayer?.pause()
                                                         let newPlayer=AVPlayer(url: url)
                                                         audioPlayer = newPlayer
@@ -800,6 +806,11 @@ struct ChatView: View {
                                                         audioEndObserver=NotificationCenter.default.addObserver(forName:.AVPlayerItemDidPlayToEndTime,object:newPlayer.currentItem,queue:.main){_ in
                                                             newPlayer.seek(to:.zero)
                                                             playingAudioID=nil
+                                                        }
+                                                        if let audioFailureObserver {NotificationCenter.default.removeObserver(audioFailureObserver)}
+                                                        audioFailureObserver=NotificationCenter.default.addObserver(forName:.AVPlayerItemFailedToPlayToEndTime,object:newPlayer.currentItem,queue:.main){_ in
+                                                            playingAudioID=nil
+                                                            store.alertText="Не удалось воспроизвести голосовое. Попробуй загрузить его снова."
                                                         }
                                                         newPlayer.play()
                                                     }
@@ -1007,7 +1018,7 @@ struct ChatView: View {
                 uploading=false
             }
         }
-        .onDisappear { audioPlayer?.pause(); audioPlayer = nil; playingAudioID = nil; if let audioEndObserver {NotificationCenter.default.removeObserver(audioEndObserver)}; voiceRecorder.cancel() }
+        .onDisappear { audioRequest=UUID();if let audioFailureObserver {NotificationCenter.default.removeObserver(audioFailureObserver)}; audioPlayer?.pause(); audioPlayer = nil; playingAudioID = nil; if let audioEndObserver {NotificationCenter.default.removeObserver(audioEndObserver)}; voiceRecorder.cancel() }
         .onChange(of:playingAudioID) { _, activeID in
             if activeID == nil { audioPlayer?.pause() }
         }

@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 import PhotosUI
 import SafariServices
+import WebKit
 import ContactsUI
 import Contacts
 
@@ -135,12 +136,16 @@ struct PhoneLinkView:View {
 
 struct SafariCallView:UIViewControllerRepresentable {
     let url:URL
-    func makeUIViewController(context:Context)->SFSafariViewController {
-        let c=SFSafariViewController(url:url)
-        c.preferredControlTintColor = .white
-        return c
+    func makeUIViewController(context:Context)->WKWebView {
+        let view=WKWebView(frame:.zero)
+        view.backgroundColor = .black
+        view.isOpaque = false
+        view.scrollView.isScrollEnabled = false
+        view.configuration.allowsInlineMediaPlayback = true
+        view.load(URLRequest(url:url))
+        return view
     }
-    func updateUIViewController(_ vc:SFSafariViewController,context:Context){}
+    func updateUIViewController(_ vc:WKWebView,context:Context){}
 }
 
 struct IncomingCallsView:View {

@@ -43,6 +43,8 @@ public final class MainActivity extends Activity {
     Button voiceButton;
     MediaPlayer voicePlayer;
     int playingVoiceID=-1;
+    int requestedVoiceID=-1;
+    long voicePlaybackGeneration=0;
     long voiceStartedAt=0;
     final Handler voiceHandler=new Handler(Looper.getMainLooper());
     final Runnable voiceTimeout=()->{if(voiceRecorder!=null)finishVoice();};
@@ -349,6 +351,8 @@ public final class MainActivity extends Activity {
         }
     }
     void stopVoicePlayback(){
+        voicePlaybackGeneration++;
+        requestedVoiceID=-1;
         playingVoiceID=-1;
         if(voicePlayer!=null){
             try{voicePlayer.stop();}catch(Exception ignored){}
@@ -358,15 +362,18 @@ public final class MainActivity extends Activity {
     }
     void playVoice(JSONObject attachment){
         int id=attachment.optInt("id");
-        if(voicePlayer!=null && playingVoiceID==id){stopVoicePlayback();return;}
+        if(requestedVoiceID==id){stopVoicePlayback();return;}
         stopVoicePlayback();
+        requestedVoiceID=id;
+        long generation=voicePlaybackGeneration;
         perform(()->http("/attachments/"+id,"GET",null),bytes->{
+            if(generation!=voicePlaybackGeneration || !"chat".equals(screen))return;
             File temp=new File(getCacheDir(),"voice_playback_"+id+".m4a");
             try(FileOutputStream output=new FileOutputStream(temp)){output.write(bytes);}
             try{
                 MediaPlayer player=new MediaPlayer();
                 player.setDataSource(temp.getAbsolutePath());
-                player.setOnCompletionListener(p->stopVoicePlayback());
+                player.setOnCompletionListener(p->{if(voicePlayer==p)stopVoicePlayback();});
                 player.prepare();
                 voicePlayer=player;
                 playingVoiceID=id;

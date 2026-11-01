@@ -289,6 +289,8 @@ struct ServerMonitoringScreen: View {
                 }
             }
             if let snapshot = monitor.latest {
+                AdminInfoRow(title: "Нагрузка CPU", value: MonitorFormat.percent(snapshot.cpu.usage_percent))
+                AdminInfoRow(title: "Использование RAM", value: MonitorFormat.percent(snapshot.memory.percent))
                 AdminInfoRow(title: "Система", value: snapshot.os)
                 AdminInfoRow(title: "Время работы", value: MonitorFormat.uptime(snapshot.uptime_seconds))
                 if let updated = monitor.updatedAt {

@@ -471,6 +471,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     private var cancelled=false
     var stopWhenReady=false
     private let session=AVCaptureSession()
+    private let sessionQueue=DispatchQueue(label:"Nightwell.circle.capture")
     private let output=AVCaptureMovieFileOutput()
     private let preview=AVCaptureVideoPreviewLayer()
     private let record=UIButton(type:.system)
@@ -534,7 +535,10 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         flash.frame=CGRect(x:28,y:controlsY,width:60,height:54)
         timer.frame=CGRect(x:0,y:y-44,width:view.bounds.width,height:30)
     }
-    private func configure(){
+    private func configure(resumeRecording:Bool=false){
+        sessionQueue.async {[weak self] in self?.configureSession(resumeRecording:resumeRecording)}
+    }
+    private func configureSession(resumeRecording:Bool){
         session.beginConfiguration()
         session.sessionPreset = .medium
         for input in session.inputs {session.removeInput(input)}
@@ -548,9 +552,11 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             session.addInput(audio)
         }
         output.maxRecordedDuration=CMTime(seconds:60,preferredTimescale:600)
-        flash.isEnabled=device.hasTorch
-        if !device.hasTorch {torchEnabled=false}
-        updateFlashIcon()
+        DispatchQueue.main.async {
+            self.flash.isEnabled=device.hasTorch
+            if !device.hasTorch {self.torchEnabled=false}
+            self.updateFlashIcon()
+        }
         session.commitConfiguration()
         // Lock capture and preview to portrait independently of device rotation.
         if let connection=output.connection(with:.video),connection.isVideoOrientationSupported {
@@ -559,17 +565,16 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         if let connection=preview.connection,connection.isVideoOrientationSupported {
             connection.videoOrientation = .portrait
         }
-        DispatchQueue.global(qos:.userInitiated).async {[weak self] in
-            guard let self else{return}
-            self.session.startRunning()
-            DispatchQueue.main.async {
-                if self.autoStart && !self.output.isRecording && self.segments.isEmpty {
-                    self.autoStart=false
-                    self.toggleRecording()
-                }
+        session.startRunning()
+        DispatchQueue.main.async {
+            guard !self.cancelled else{return}
+            if (resumeRecording || self.autoStart) && !self.output.isRecording {
+                self.autoStart=false
+                self.toggleRecording()
             }
         }
     }
+
     private func updateFlashIcon(){
         flash.setImage(UIImage(systemName:torchEnabled ? "bolt.fill" : "bolt.slash.fill"),for:.normal)
         flash.tintColor = torchEnabled ? .systemYellow : .white
@@ -634,7 +639,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         }
     }
     private func cleanup(){
-        DispatchQueue.global(qos:.userInitiated).async {[weak self] in self?.session.stopRunning()}
+        sessionQueue.async {[weak self] in self?.session.stopRunning()}
     }
     private func finishSegments(){
         let clips=segments
@@ -703,11 +708,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         if switching && !stopWhenReady {
             switching=false
             cameraPosition=cameraPosition == .front ? .back : .front
-            configure()
-            DispatchQueue.main.asyncAfter(deadline:.now()+0.45) { [weak self] in
-                guard let self,!self.cancelled,!self.stopWhenReady else{return}
-                self.toggleRecording()
-            }
+            configure(resumeRecording:true)
             return
         }
         ticker?.invalidate()

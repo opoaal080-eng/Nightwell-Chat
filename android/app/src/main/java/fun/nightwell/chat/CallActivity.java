@@ -17,6 +17,12 @@ public final class CallActivity extends Activity {
         Button close=new Button(this);close.setText("Завершить звонок");box.addView(close);
         close.setOnClickListener(v->finish());
         web=new WebView(this);box.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(box);
+        web.setBackgroundColor(0xff080808);
+        web.setWebViewClient(new WebViewClient(){
+            @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error){if(request.isForMainFrame())showError();}
+            @Override public void onReceivedHttpError(WebView view,WebResourceRequest request,WebResourceResponse response){if(request.isForMainFrame())showError();}
+            @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){return !"chat.nightwell.fun".equals(request.getUrl().getHost()) || !"https".equals(request.getUrl().getScheme());}
+        });
         web.setWebChromeClient(new WebChromeClient(){
             @Override public void onPermissionRequest(PermissionRequest req){
                 runOnUiThread(()->{
@@ -47,6 +53,7 @@ public final class CallActivity extends Activity {
         String u=getIntent().getStringExtra("url");
         if(u!=null && u.startsWith("https://chat.nightwell.fun/calls/"))web.loadUrl(u);else finish();
     }
+    private void showError(){web.loadDataWithBaseURL(null,"<html><meta name='viewport' content='width=device-width'><body style='background:#080808;color:white;padding:24px'>Не удалось открыть звонок. Проверь подключение и обновление сервера, затем открой звонок снова.</body></html>","text/html","UTF-8",null);}
     private void grantMedia(PermissionRequest req){
         ArrayList<String> allowed=new ArrayList<>();
         for(String resource:req.getResources()){
@@ -66,3 +73,4 @@ public final class CallActivity extends Activity {
     }
     @Override public void onDestroy(){if(waiting!=null)waiting.deny();if(web!=null){web.loadUrl("about:blank");web.destroy();}super.onDestroy();}
 }
+

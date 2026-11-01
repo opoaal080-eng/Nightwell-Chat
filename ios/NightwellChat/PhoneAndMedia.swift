@@ -165,6 +165,7 @@ struct SafariCallView:UIViewRepresentable {
         config.mediaTypesRequiringUserActionForPlayback = []
         let view = WKWebView(frame: .zero, configuration: config)
         view.uiDelegate = context.coordinator
+        view.navigationDelegate = context.coordinator
         view.backgroundColor = .black
         view.isOpaque = false
         view.scrollView.isScrollEnabled = false
@@ -176,8 +177,14 @@ struct SafariCallView:UIViewRepresentable {
         view.stopLoading()
         view.loadHTMLString("",baseURL:nil)
         view.uiDelegate=nil
+        view.navigationDelegate=nil
     }
-    final class Coordinator:NSObject,WKUIDelegate {
+    final class Coordinator:NSObject,WKUIDelegate,WKNavigationDelegate {
+        private func showFailure(_ view:WKWebView){
+            view.loadHTMLString("<html><meta name='viewport' content='width=device-width'><body style='background:#080808;color:white;font:18px -apple-system;padding:32px'>Не удалось открыть звонок. Проверь подключение и обновление сервера, затем открой звонок снова.</body></html>",baseURL:nil)
+        }
+        func webView(_ webView:WKWebView,didFailProvisionalNavigation navigation:WKNavigation!,withError error:Error){showFailure(webView)}
+        func webView(_ webView:WKWebView,didFail navigation:WKNavigation!,withError error:Error){showFailure(webView)}
         @available(iOS 15.0,*)
         func webView(_ webView:WKWebView,requestMediaCapturePermissionFor origin:WKSecurityOrigin,
                      initiatedByFrame frame:WKFrameInfo,type:WKMediaCaptureType,

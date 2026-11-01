@@ -423,7 +423,6 @@ public final class MainActivity extends Activity {
         frame.addView(close,cp);
         close.setOnClickListener(v->dialog.dismiss());
         dialog.setContentView(frame);
-        if(dialog.getWindow()!=null)dialog.getWindow().setLayout(-1,dp(370));
         dialog.setOnDismissListener(d->{video.stopPlayback();});
         dialog.show();
         if(dialog.getWindow()!=null)dialog.getWindow().setLayout(-1,dp(370));

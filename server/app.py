@@ -510,7 +510,7 @@ ALLOWED_SUFFIXES = {".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png
     ".txt":"text/plain", ".zip":"application/zip", ".docx":"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".m4a":"audio/mp4", ".aac":"audio/aac", ".mp3":"audio/mpeg", ".ogg":"audio/ogg",
-    ".opus":"audio/ogg", ".wav":"audio/wav", ".mp4":"video/mp4", ".mov":"video/quicktime",
+    ".opus":"audio/ogg", ".wav":"audio/wav", ".mp4":"video/mp4", ".3gp":"video/3gpp", ".mov":"video/quicktime",
     ".webm":"video/webm", ".mkv":"video/x-matroska", ".pptx":"application/vnd.openxmlformats-officedocument.presentationml.presentation"}
 
 def attachment_view(c, mid: int):

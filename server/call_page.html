@@ -4,43 +4,59 @@
 'use strict';
 const cid='__CALL_ID__';const fragment=new URLSearchParams(location.hash.substring(1));const ticket=fragment.get('ticket')||'';
 const status=document.getElementById('state'),start=document.getElementById('start'),hang=document.getElementById('hang'),audio=document.getElementById('remote');
-let ws,peer,stream,role,ready=false,offered=false,finished=false;
+let ws,peer,stream,role,ready=false,offered=false,finished=false,localReady=false,remoteReady=false;
+let candidates=[],pendingOffer=null,negotiating=false;
 function text(msg){status.textContent=msg}
 function send(kind,data){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:kind,data:data||null}))}
-function closeCall(){finished=true;send('hangup');if(stream)stream.getTracks().forEach(t=>t.stop());if(peer)peer.close();if(ws)ws.close();start.disabled=true;text('Звонок завершён')}
-hang.onclick=closeCall;
+function closeCall(notify=true){if(finished)return;finished=true;if(notify)send('hangup');if(stream)stream.getTracks().forEach(t=>t.stop());if(peer)peer.close();if(ws)ws.close();start.disabled=true;text('Звонок завершён')}
+hang.onclick=()=>closeCall();
+async function flushCandidates(){if(!peer||!peer.remoteDescription)return;while(candidates.length)await peer.addIceCandidate(candidates.shift())}
+async function answerOffer(){
+ if(!pendingOffer||!stream||!localReady)return;
+ await ensurePeer();const offer=pendingOffer;pendingOffer=null;
+ await peer.setRemoteDescription(offer);await flushCandidates();
+ await peer.setLocalDescription(await peer.createAnswer());send('answer',peer.localDescription);
+}
 async function connect(){
  if(!ticket){text('Нет разрешения на звонок');start.disabled=true;return}
  ws=new WebSocket(location.origin.replace(/^http/,'ws')+'/calls/'+cid+'/signal?ticket='+encodeURIComponent(ticket));
- ws.onclose=()=>{if(!finished)text('Связь прервана. Закрой окно и попробуй снова')};
+ ws.onclose=()=>{if(!finished){text('Связь прервана. Закрой окно и попробуй снова');if(stream)stream.getTracks().forEach(t=>t.stop());if(peer)peer.close()}};
  ws.onerror=()=>text('Не удалось подключиться к звонку');
  ws.onmessage=async e=>{
-  const msg=JSON.parse(e.data);
   try {
-   if(msg.type==='connected'){role=msg.role;text(role==='caller'?'Ожидание ответа…':'Соединение…');return}
-   if(msg.type==='peer_ready'){ready=true;await negotiate();return}
-   if(msg.type==='peer_left'){ready=false;offered=false;text('Собеседник отключился');return}
-   if(msg.type==='ended'){closeCall();return}
-   if(msg.type==='offer'){await ensurePeer();await peer.setRemoteDescription(msg.data);let answer=await peer.createAnswer();await peer.setLocalDescription(answer);send('answer',peer.localDescription);return}
-   if(msg.type==='answer' && peer){await peer.setRemoteDescription(msg.data);return}
-   if(msg.type==='ice' && peer && msg.data){try{await peer.addIceCandidate(msg.data)}catch(err){console.warn('ICE not accepted',err)}}
+   const msg=JSON.parse(e.data);
+   if(msg.type==='connected'){role=msg.role;text(role==='caller'?'Ожидание ответа':'Нажми «Включить микрофон»');return}
+   if(msg.type==='peer_ready'){ready=true;if(localReady)send('media_ready');await negotiate();return}
+   if(msg.type==='media_ready'){remoteReady=true;await negotiate();return}
+   if(msg.type==='peer_left'){ready=false;remoteReady=false;offered=false;candidates=[];pendingOffer=null;if(peer)peer.close();peer=null;text('Собеседник отключился');return}
+   if(msg.type==='ended'){closeCall(false);return}
+   if(msg.type==='offer'){pendingOffer=msg.data;await answerOffer();return}
+   if(msg.type==='answer' && peer){await peer.setRemoteDescription(msg.data);await flushCandidates();return}
+   if(msg.type==='ice' && msg.data){candidates.push(msg.data);await flushCandidates()}
   } catch(err){text('Ошибка WebRTC: '+err.message)}
  }
 }
 async function ensurePeer(){
  if(peer)return;
- const cfg={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
- peer=new RTCPeerConnection(cfg);
+ peer=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
  peer.onicecandidate=e=>{if(e.candidate)send('ice',e.candidate.toJSON())};
- peer.ontrack=e=>{audio.srcObject=e.streams[0];audio.play().catch(()=>text('Нажми экран, чтобы включить звук'))};
- peer.onconnectionstatechange=()=>{if(peer.connectionState==='connected')text('Разговор');if(peer.connectionState==='failed')text('Не удалось установить соединение. Нужен TURN-сервер')};
+ peer.ontrack=e=>{audio.srcObject=e.streams[0]||new MediaStream([e.track]);audio.play().catch(()=>{start.disabled=false;start.textContent='Включить звук'})};
+ peer.onconnectionstatechange=()=>{if(!peer||finished)return;if(peer.connectionState==='connected')text('Разговор');if(peer.connectionState==='failed')text('Соединение не установлено. Для этой сети нужен TURN-сервер')};
  if(stream)stream.getTracks().forEach(track=>peer.addTrack(track,stream));
 }
-async function negotiate(){if(finished||!stream||!ready)return;await ensurePeer();if(role==='caller'&&!offered){offered=true;const offer=await peer.createOffer();await peer.setLocalDescription(offer);send('offer',peer.localDescription)}else{text('Устанавливаем соединение…')}}
+async function negotiate(){
+ if(finished||!localReady||!remoteReady||!ready||negotiating)return;
+ negotiating=true;
+ try {await ensurePeer();if(role==='caller'&&!offered){offered=true;await peer.setLocalDescription(await peer.createOffer());send('offer',peer.localDescription)}else{text('Устанавливаем соединение')}}
+ finally {negotiating=false}
+}
 start.onclick=async()=>{
+ if(localReady){await audio.play();start.disabled=true;return}
  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){text('Микрофон недоступен в этом браузере');return}
- try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false});start.disabled=true;text('Микрофон активен. Соединяем…');await negotiate()}catch(err){text('Разреши доступ к микрофону: '+err.message)}
+ start.disabled=true;
+ try{const captured=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false});if(finished){captured.getTracks().forEach(t=>t.stop());return}stream=captured;localReady=true;text('Микрофон активен. Соединяем');if(ready)send('media_ready');await answerOffer();await negotiate()}
+ catch(err){start.disabled=false;text('Разреши доступ к микрофону: '+err.message)}
 };
-window.addEventListener('pagehide',()=>{if(stream)stream.getTracks().forEach(t=>t.stop());if(peer)peer.close()});
+window.addEventListener('pagehide',()=>closeCall());
 connect();
 </script></body></html>

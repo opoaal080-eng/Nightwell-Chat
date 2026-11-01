@@ -16,19 +16,20 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fun.nightwell.chat
-        MARKETING_VERSION: '0.7.0'
-        CURRENT_PROJECT_VERSION: '7'
+        MARKETING_VERSION: '0.9.0'
+        CURRENT_PROJECT_VERSION: '9'
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: NightwellChat/Info.plist
       properties:
         CFBundleDisplayName: Nightwell Chat
-        CFBundleShortVersionString: '0.7.0'
-        CFBundleVersion: '7'
+        CFBundleShortVersionString: '0.9.0'
+        CFBundleVersion: '9'
         UILaunchScreen: {}
         NSContactsUsageDescription: "Доступ нужен для показа адресной книги на устройстве и поиска выбранного номера в Nightwell Chat."
         NSMicrophoneUsageDescription: "Микрофон используется для звонков и записи голосовых сообщений Nightwell Chat."
         NSCameraUsageDescription: "Камера используется для видеозвонков и записи видеосообщений Nightwell Chat."
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false
+

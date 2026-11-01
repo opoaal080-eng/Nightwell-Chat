@@ -67,8 +67,7 @@ struct AvatarCircle: View {
         .background(.white.opacity(0.12),in:Circle())
         .clipShape(Circle())
         .task(id:"\(person?.id ?? 0)-\(store.eventVersion)") {
-            image=nil
-            if let p=person,p.has_avatar == true,
+            if let p=person,
                let bytes=await store.loadAvatar(p.id) { image=UIImage(data:bytes) }
         }
     }
@@ -349,3 +348,4 @@ struct PhoneContactsView:View {
         }.onAppear {contacts.requestContacts()}
     }
 }
+

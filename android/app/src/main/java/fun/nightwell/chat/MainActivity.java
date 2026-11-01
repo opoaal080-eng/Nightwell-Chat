@@ -27,7 +27,7 @@ import java.util.concurrent.*;
 import java.util.function.Consumer;
 
 /** Native Nightwell Chat client. Only HTTPS connections to the Nightwell server. */
-public final class MainActivity extends Activity {
+public final class MainActivity extends androidx.activity.ComponentActivity {
     static final String HOST="https://chat.nightwell.fun";
     static final int BG=0xff080808, PANEL=0xff1a1a1a, FG=0xfff5f5f5, MUTED=0xffaaaaaa;
     static final int PICK_AVATAR=12, PICK_ATTACHMENT=13, PICK_CONTACT=14, CAPTURE_VIDEO=15;
@@ -39,6 +39,8 @@ public final class MainActivity extends Activity {
     LinearLayout page, messages;
     ScrollView scroller;
     boolean loading=false;
+    CircleCapture circleCapture;
+    boolean videoMode=false, mediaPressed=false, mediaHeld=false;
     MediaRecorder voiceRecorder;
     File voiceFile;
     Button voiceButton;
@@ -68,7 +70,7 @@ public final class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);
         if(token.isEmpty())phoneLogin(false); else getMe(false);
     }
-    @Override protected void onDestroy(){stopVoicePlayback();cancelVoice();handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){stopVoicePlayback();cancelVoice();if(circleCapture!=null)circleCapture.cancel();handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
 
     int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
     GradientDrawable shape(int color){GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(dp(14));g.setStroke(dp(1),0xff333333);return g;}
@@ -248,22 +250,26 @@ public final class MainActivity extends Activity {
         });
         voiceButton=new Button(this);
         voiceButton.setAllCaps(false);
-        voiceButton.setText("🎤 Записать голосовое");
-        voiceButton.setTextColor(FG);
-        voiceButton.setBackground(shape(PANEL));
-        page.addView(voiceButton,new LinearLayout.LayoutParams(-1,dp(48)));
-        voiceButton.setOnClickListener(v->{
-            if(voiceRecorder!=null)finishVoice();
-            else if(Build.VERSION.SDK_INT>=23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)
-                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},102);
-            else startVoice();
-        });
-        btn("◉ Записать видеосообщение",()->{
-            Intent camera=new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
-            camera.putExtra(MediaStore.EXTRA_DURATION_LIMIT,60);
-            camera.putExtra(MediaStore.EXTRA_VIDEO_QUALITY,0);
-            if(camera.resolveActivity(getPackageManager())!=null)startActivityForResult(camera,CAPTURE_VIDEO);
-            else note("На устройстве нет приложения для записи видео");
+        voiceButton.setText("🎤");
+        voiceButton.setContentDescription("Нажми для смены режима, удерживай для записи");
+        voiceButton.setTextColor(FG);voiceButton.setBackground(shape(0x44333344));
+        page.addView(voiceButton,new LinearLayout.LayoutParams(dp(52),dp(52)));
+        voiceButton.setOnTouchListener((v,event)->{
+            if(event.getAction()==MotionEvent.ACTION_DOWN){
+                mediaPressed=true;mediaHeld=false;v.getParent().requestDisallowInterceptTouchEvent(true);
+                handler.postDelayed(()->{if(!mediaPressed)return;mediaHeld=true;
+                    String[] permissions=videoMode?new String[]{Manifest.permission.RECORD_AUDIO,Manifest.permission.CAMERA}:new String[]{Manifest.permission.RECORD_AUDIO};
+                    for(String permission:permissions)if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED){requestPermissions(permissions,102);return;}
+                    if(videoMode)circleCapture=new CircleCapture(this);else startVoice();
+                },350);return true;
+            }
+            if(event.getAction()==MotionEvent.ACTION_UP||event.getAction()==MotionEvent.ACTION_CANCEL){
+                mediaPressed=false;v.getParent().requestDisallowInterceptTouchEvent(false);
+                if(event.getAction()==MotionEvent.ACTION_CANCEL){cancelVoice();if(circleCapture!=null)circleCapture.cancel();}
+                else if(mediaHeld){if(circleCapture!=null)circleCapture.finish();else if(voiceRecorder!=null)finishVoice();}
+                else {videoMode=!videoMode;voiceButton.setText(videoMode?"◉":"🎤");v.performClick();}
+                return true;
+            }return true;
         });
         btn("＋ Фото или файл",()->{
             Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);pick.addCategory(Intent.CATEGORY_OPENABLE);pick.setType("*/*");
@@ -286,12 +292,12 @@ public final class MainActivity extends Activity {
             voiceStartedAt=System.currentTimeMillis();
             voiceHandler.postDelayed(voiceTimeout,120000);
             if(voiceButton!=null)voiceButton.setText("■ Отправить голосовое");
-            note("Запись началась. Нажми ещё раз, чтобы отправить.");
+
         }catch(Exception e){note("Ошибка микрофона: "+e.getMessage());cancelVoice();}
     }
     void releaseVoice(){
         voiceHandler.removeCallbacks(voiceTimeout);
-        if(voiceButton!=null)voiceButton.setText("🎤 Записать голосовое");
+        if(voiceButton!=null)voiceButton.setText(videoMode?"◉":"🎤");
         if(voiceRecorder!=null){try{voiceRecorder.release();}catch(Exception ignored){} voiceRecorder=null;}
     }
     void cancelVoice(){
@@ -301,10 +307,16 @@ public final class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){
         super.onRequestPermissionsResult(requestCode,permissions,grantResults);
         if(requestCode==102){
-            if(grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED && "chat".equals(screen))startVoice();
-            else note("Для голосовых сообщений нужен доступ к микрофону");
+            boolean allowed=grantResults.length>0;for(int grant:grantResults)allowed &= grant==PackageManager.PERMISSION_GRANTED;
+            if(allowed && mediaPressed && "chat".equals(screen)){if(videoMode)circleCapture=new CircleCapture(this);else startVoice();}
+            else if(!allowed)note("Для записи нужны разрешения на микрофон и камеру");
         }
     }
+    void sendCircle(File file){int cid=chatId;perform(()->{
+        try(FileInputStream in=new FileInputStream(file)){return multipart("/chats/"+cid+"/attachments","video_circle.mp4","video/mp4",read(in,50*1024*1024));}
+        finally{file.delete();}
+    },result->{if(cid==chatId)loadMessages(true);});}
+
     void finishVoice(){
         if(System.currentTimeMillis()-voiceStartedAt<1000){
             note("Запись слишком короткая");cancelVoice();return;
@@ -600,6 +612,8 @@ public final class MainActivity extends Activity {
             if(avatar){
                 Bitmap bitmap=BitmapFactory.decodeByteArray(data,0,data.length);
                 if(bitmap==null)throw new IOException("Это не изображение");
+                int side=Math.min(bitmap.getWidth(),bitmap.getHeight());
+                bitmap=Bitmap.createScaledBitmap(Bitmap.createBitmap(bitmap,(bitmap.getWidth()-side)/2,(bitmap.getHeight()-side)/2,side,side),512,512,true);
                 ByteArrayOutputStream jpg=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.JPEG,85,jpg);
                 data=jpg.toByteArray();name="avatar.jpg";mime="image/jpeg";
             }
@@ -631,3 +645,4 @@ public final class MainActivity extends Activity {
         }
     }
 }
+

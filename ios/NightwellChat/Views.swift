@@ -10,11 +10,12 @@ private let muted = Color(white: 0.63)
 private let glassBlue = Color(red:0.38,green:0.66,blue:1.0)
 
 struct NightwellBackground: View {
+    @AppStorage("ambientBackground") private var ambient=true
     var body:some View {
         ZStack {
             Color(red:0.025,green:0.035,blue:0.065)
-            RadialGradient(colors:[glassBlue.opacity(0.22),.clear],center:.topTrailing,startRadius:10,endRadius:450)
-            RadialGradient(colors:[Color.purple.opacity(0.12),.clear],center:.bottomLeading,startRadius:30,endRadius:380)
+            if ambient { RadialGradient(colors:[glassBlue.opacity(0.22),.clear],center:.topTrailing,startRadius:10,endRadius:450)
+            RadialGradient(colors:[Color.purple.opacity(0.12),.clear],center:.bottomLeading,startRadius:30,endRadius:380) }
         }.ignoresSafeArea()
     }
 }
@@ -24,6 +25,12 @@ struct GlassPanel: ViewModifier {
         content.padding(14).background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:24))
             .overlay(RoundedRectangle(cornerRadius:24).stroke(LinearGradient(colors:[white.opacity(0.32),white.opacity(0.04)],startPoint:.topLeading,endPoint:.bottomTrailing),lineWidth:1))
             .shadow(color:.black.opacity(0.20),radius:16,y:8)
+    }
+}
+struct FloatingGlass:ViewModifier {
+    @ViewBuilder func body(content:Content)->some View {
+        if #available(iOS 26.0,*) {content.glassEffect(.regular,in:Capsule())}
+        else {content.background(.ultraThinMaterial,in:Capsule())}
     }
 }
 extension View { func glass() -> some View { modifier(GlassPanel()) } }
@@ -233,7 +240,7 @@ struct InboxView: View {
                         }
                     }
                     .font(.system(size:14,weight:.semibold))
-                    .padding(4).background(.ultraThinMaterial,in:Capsule())
+                    .padding(4).modifier(FloatingGlass())
                     .overlay(Capsule().stroke(.white.opacity(0.15)))
                 }
                 .padding(.horizontal,16).padding(.top,10).padding(.bottom,12)
@@ -241,19 +248,19 @@ struct InboxView: View {
             }
             .safeAreaInset(edge:.bottom,spacing:0) {
                 HStack(spacing:0) {
-                    Button {findPeople=true} label:{Image(systemName:"person.crop.circle")}
-                    Button {calls=true} label:{Image(systemName:"phone")}
+                    Button {findPeople=true} label:{Image(systemName:"person.crop.circle").frame(maxWidth:.infinity).frame(height:44)}.accessibilityLabel("Контакты")
+                    Button {calls=true} label:{Image(systemName:"phone").frame(maxWidth:.infinity).frame(height:44)}.accessibilityLabel("Звонки")
                     Image(systemName:"bubble.left.and.bubble.right.fill")
                         .foregroundStyle(glassBlue)
                         .frame(maxWidth:.infinity)
-                    Button {settings=true} label:{Image(systemName:"gearshape")}
+                    Button {settings=true} label:{Image(systemName:"gearshape").frame(maxWidth:.infinity).frame(height:44)}.accessibilityLabel("Настройки")
                 }
                 .font(.system(size:23,weight:.regular))
                 .buttonStyle(.plain)
                 .frame(maxWidth:.infinity)
                 .frame(height:54)
                 .padding(.horizontal,12)
-                .background(.ultraThinMaterial,in:Capsule())
+                .modifier(FloatingGlass())
                 .overlay(Capsule().stroke(LinearGradient(colors:[.white.opacity(0.35),.white.opacity(0.05)],startPoint:.top,endPoint:.bottom),lineWidth:1))
                 .shadow(color:.black.opacity(0.3),radius:18,y:8)
                 .padding(.horizontal,24).padding(.bottom,3)
@@ -507,9 +514,9 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         timer.text="00:00 / 01:00"
         view.addSubview(timer)
         AVCaptureDevice.requestAccess(for:.video){[weak self] granted in
-            guard granted else{return}
-            AVCaptureDevice.requestAccess(for:.audio){_ in
-                DispatchQueue.main.async {self?.configure()}
+            guard granted else{DispatchQueue.main.async {self?.onClose?()};return}
+            AVCaptureDevice.requestAccess(for:.audio){allowed in
+                DispatchQueue.main.async {if allowed {self?.configure()} else {self?.onClose?()}}
             }
         }
     }
@@ -522,7 +529,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         preview.masksToBounds=true
         record.frame=CGRect(x:(view.bounds.width-76)/2,y:y+side+42,width:76,height:76)
         record.layer.cornerRadius=38
-        let controlsY=view.bounds.height-view.safeAreaInsets.bottom-145
+        let controlsY=view.bounds.height-view.safeAreaInsets.bottom-110
         flip.frame=CGRect(x:view.bounds.width-88,y:controlsY,width:60,height:54)
         flash.frame=CGRect(x:28,y:controlsY,width:60,height:54)
         timer.frame=CGRect(x:0,y:y-44,width:view.bounds.width,height:30)
@@ -582,6 +589,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     @objc private func switchCamera(){
         torchEnabled=false
         updateFlashIcon()
+        guard !switching && !cancelled else {return}
         if output.isRecording {
             switching=true
             output.stopRecording()
@@ -591,7 +599,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         }
     }
     var isRecordingCircle:Bool {output.isRecording}
-    func finishCircle(){if output.isRecording {output.stopRecording()}}
+    func finishCircle(){stopWhenReady=true;if output.isRecording && !switching {output.stopRecording()}}
     @objc private func toggleRecording(){
         if output.isRecording {output.stopRecording();return}
         let url=FileManager.default.temporaryDirectory.appendingPathComponent("circle_\(UUID().uuidString).mov")
@@ -605,12 +613,13 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
                 self.output.stopRecording()
             }
         }
-        started=Date()
+        if started == nil {started=Date()}
         record.backgroundColor = .systemRed
         ticker?.invalidate()
         ticker=Timer.scheduledTimer(withTimeInterval:0.2,repeats:true){[weak self] _ in
             guard let self,let started=self.started else{return}
             let elapsed=min(60,Int(Date().timeIntervalSince(started)))
+            if elapsed >= 60 {self.finishCircle()}
             self.timer.text=String(format:"%02d:%02d / 01:00",elapsed/60,elapsed%60)
         }
     }
@@ -640,6 +649,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             onClose?();return
         }
         let audioTrack=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid)
+        var instructions:[AVMutableVideoCompositionInstruction]=[]
         var cursor=CMTime.zero
         for url in clips {
             let asset=AVURLAsset(url:url)
@@ -647,7 +657,17 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             let range=CMTimeRange(start:.zero,duration:asset.duration)
             do {
                 try videoTrack.insertTimeRange(range,of:source,at:cursor)
-                if cursor == .zero { videoTrack.preferredTransform = source.preferredTransform }
+                let instruction=AVMutableVideoCompositionInstruction()
+                instruction.timeRange=CMTimeRange(start:cursor,duration:asset.duration)
+                let layer=AVMutableVideoCompositionLayerInstruction(assetTrack:videoTrack)
+                let rect=CGRect(origin:.zero,size:source.naturalSize).applying(source.preferredTransform)
+                let scale=480/max(1,min(abs(rect.width),abs(rect.height)))
+                var transform=source.preferredTransform.concatenating(CGAffineTransform(translationX:-rect.minX,y:-rect.minY))
+                transform=transform.concatenating(CGAffineTransform(scaleX:scale,y:scale))
+                transform=transform.concatenating(CGAffineTransform(translationX:(480-abs(rect.width)*scale)/2,y:(480-abs(rect.height)*scale)/2))
+                layer.setTransform(transform,at:cursor)
+                instruction.layerInstructions=[layer]
+                instructions.append(instruction)
                 if let audio=asset.tracks(withMediaType:.audio).first {
                     try? audioTrack?.insertTimeRange(range,of:audio,at:cursor)
                 }
@@ -658,6 +678,11 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         guard let exporter=AVAssetExportSession(asset:composition,presetName:AVAssetExportPresetHighestQuality) else {
             onClose?();return
         }
+        let videoComposition=AVMutableVideoComposition()
+        videoComposition.renderSize=CGSize(width:480,height:480)
+        videoComposition.frameDuration=CMTime(value:1,timescale:30)
+        videoComposition.instructions=instructions
+        exporter.videoComposition=videoComposition
         exporter.outputURL=result
         exporter.outputFileType = .mov
         exporter.exportAsynchronously { [weak self] in
@@ -668,18 +693,19 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         }
     }
     func fileOutput(_ output:AVCaptureFileOutput,didFinishRecordingTo url:URL,from connections:[AVCaptureConnection],error:Error?){
-        if error == nil && !cancelled {segments.append(url)}
+        let successful = error == nil || (error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool == true
+        if successful && !cancelled {segments.append(url)}
         if cancelled {
             cleanup()
             onClose?()
             return
         }
-        if switching {
+        if switching && !stopWhenReady {
             switching=false
             cameraPosition=cameraPosition == .front ? .back : .front
             configure()
             DispatchQueue.main.asyncAfter(deadline:.now()+0.45) { [weak self] in
-                guard let self else{return}
+                guard let self,!self.cancelled,!self.stopWhenReady else{return}
                 self.toggleRecording()
             }
             return
@@ -881,6 +907,7 @@ struct ChatView: View {
                                             showingVideoRecorder=true
                                         } else {
                                             Task {await voiceRecorder.start()
+                                                if !mediaPressing {voiceRecorder.cancel();return}
                                                 if let error=voiceRecorder.errorMessage {store.alertText=error}
                                             }
                                         }
@@ -895,7 +922,6 @@ struct ChatView: View {
                                         stopCircleRequested=true
                                     } else {
                                         Task {
-                                            try? await Task.sleep(nanoseconds:250_000_000)
                                             if let file=voiceRecorder.finish(),let data=try? Data(contentsOf:file) {
                                                 uploading=true
                                                 let success=await store.sendFile(chatID:chat.id,bytes:data,filename:"voice.m4a",mime:"audio/mp4")
@@ -914,8 +940,7 @@ struct ChatView: View {
                 }
             }
             .padding(.horizontal,12).padding(.vertical,9)
-            .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:30))
-            .overlay(RoundedRectangle(cornerRadius:30).stroke(.white.opacity(0.16)))
+
             .padding(.horizontal,8).padding(.bottom,5)
         }
         .background(NightwellBackground())
@@ -936,7 +961,7 @@ struct ChatView: View {
             }
         }
         .sheet(isPresented:$showingCall){if let callURL {SafariCallView(url:callURL)}}
-        .fullScreenCover(isPresented:$showingVideoRecorder){
+        .overlay { if showingVideoRecorder {
             VideoCircleRecorder(onVideo: { url in
                 Task {
                     guard let data=try? Data(contentsOf:url) else {
@@ -953,7 +978,7 @@ struct ChatView: View {
                     uploading=false
                 }
             }, onClose: { showingVideoRecorder=false; stopCircleRequested=false }, autoStart:startCircleImmediately, stopRequested:stopCircleRequested).ignoresSafeArea()
-        }
+        }}
         .photosPicker(isPresented:$showingPhotoPicker,selection:$pickedPhoto,matching:.images)
         .fileImporter(isPresented:$showingFilePicker,allowedContentTypes:[.item]){
             result in
@@ -1058,13 +1083,14 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Приложение") {
-                    HStack { Image(systemName:"bell.badge.fill").foregroundStyle(.red); Text("Уведомления и звуки"); Spacer(); Text("Системные").foregroundStyle(.secondary) }
-                    HStack { Image(systemName:"lock.fill").foregroundStyle(.gray); Text("Конфиденциальность") }
-                    HStack { Image(systemName:"externaldrive.fill").foregroundStyle(.green); Text("Данные и память") }
-                    HStack { Image(systemName:"circle.lefthalf.filled").foregroundStyle(.cyan); Text("Оформление"); Spacer(); Text("Тёмное").foregroundStyle(.secondary) }
+                    Button {if let url=URL(string:UIApplication.openSettingsURLString){UIApplication.shared.open(url)}} label:{Label("Уведомления и звуки",systemImage:"bell.badge.fill")}
+                    NavigationLink {PhoneLinkView()} label:{Label("Конфиденциальность",systemImage:"lock.fill")}
+                    NavigationLink {DataSettingsView()} label:{Label("Данные и память",systemImage:"externaldrive.fill")}
+                    NavigationLink {AppearanceSettingsView()} label:{Label("Оформление",systemImage:"circle.lefthalf.filled")}
+
                 }
                 Section("Версия") {
-                    Text("Nightwell Chat 0.7")
+                    Text("Nightwell Chat 0.9")
                 }
                 Section("Сервер") {
                     TextField("https://chat.nightwell.fun",text:$server)
@@ -1074,7 +1100,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(muted)
                 }
                 Section { Button("Выйти из аккаунта",role:.destructive) { store.logout(); dismiss() } }
-            }.scrollContentBackground(.hidden).background(Color.black.ignoresSafeArea())
+            }.scrollContentBackground(.hidden).background(NightwellBackground())
                 .environment(\.defaultMinListRowHeight,54)
                 .scrollDismissesKeyboard(.interactively)
                 .navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline)
@@ -1092,11 +1118,16 @@ final class NightwellVoiceRecorder: NSObject, ObservableObject {
     @Published var errorMessage: String?
     private var recorder: AVAudioRecorder?
     private var recordingURL: URL?
+    private var generation=0
 
     func start() async {
+        generation += 1
+        let request=generation
+        errorMessage=nil
         let allowed = await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { continuation.resume(returning: $0) }
         }
+        guard request == generation else {return}
         guard allowed else {
             errorMessage = "Разреши доступ к микрофону в настройках iPhone"
             return
@@ -1126,18 +1157,47 @@ final class NightwellVoiceRecorder: NSObject, ObservableObject {
     }
 
     func finish() -> URL? {
+        generation += 1
         guard isRecording else { return nil }
         recorder?.stop()
         recorder = nil
         isRecording = false
-        return recordingURL
+        let result=recordingURL
+        recordingURL=nil
+        try? AVAudioSession.sharedInstance().setActive(false, options:.notifyOthersOnDeactivation)
+        return result
     }
 
     func cancel() {
+        generation += 1
         recorder?.stop()
         recorder?.deleteRecording()
         recorder = nil
         recordingURL = nil
         isRecording = false
+        try? AVAudioSession.sharedInstance().setActive(false, options:.notifyOthersOnDeactivation)
+    }
+}
+
+
+struct AppearanceSettingsView:View {
+    @AppStorage("ambientBackground") private var ambient=true
+    var body:some View {Form {Toggle("Светящийся фон",isOn:$ambient)
+        Text("Стеклянные панели используют системный Liquid Glass на iOS 26 и новее.").font(.footnote)
+    }.navigationTitle("Оформление").scrollContentBackground(.hidden).background(NightwellBackground())}
+}
+struct DataSettingsView:View {
+    @State private var size=""
+    private var folder:URL {FileManager.default.temporaryDirectory.appendingPathComponent("NightwellAttachments",isDirectory:true)}
+    var body:some View {Form {Section("Загруженные вложения") {
+        Text(size)
+        Button("Очистить временные файлы",role:.destructive){try? FileManager.default.removeItem(at:folder);refresh()}
+        Text("Сообщения и вложения на сервере сохранятся.").font(.footnote)
+    }}.navigationTitle("Данные и память").onAppear{refresh()}}
+    private func refresh(){
+        let files=FileManager.default.enumerator(at:folder,includingPropertiesForKeys:[.fileSizeKey])
+        var bytes:Int64=0
+        while let url=files?.nextObject() as? URL {bytes += Int64((try? url.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0)}
+        size=ByteCountFormatter.string(fromByteCount:bytes,countStyle:.file)
     }
 }

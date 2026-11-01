@@ -355,14 +355,14 @@ def login(data: Credentials):
     return {"access_token":token(row["id"]),"token_type":"bearer","user":user_public(row)}
 
 @app.get("/me")
-def me(user=Depends(current)): return user
+def me(user=Depends(current)): return user_public(user)
 
 @app.patch("/me")
 def update_me(body: Profile,user=Depends(current)):
     if not body.display_name.strip(): raise HTTPException(422,"Display name cannot be blank")
     with db() as c:
         c.execute("UPDATE users SET display_name=? WHERE id=?",(body.display_name.strip(),user["id"]))
-    return {**user,"display_name":body.display_name.strip()}
+    return {**user_public(user),"display_name":body.display_name.strip()}
 
 # Phone/password login and contact discovery. A format check is NOT proof
 # of SIM ownership. No SMS, calls or third-party lookup are performed.
@@ -932,7 +932,7 @@ async def call_signal(ws: WebSocket, cid: str, ticket: str = Query(default="")):
                     await other.send_json({"type":"ended"})
                 await notify([row["caller_id"],row["callee_id"]],{"type":"call_ended","call_id":cid})
                 break
-            if kind not in ("offer","answer","ice"): continue
+            if kind not in ("offer","answer","ice","media_ready"): continue
             # Keep message type and payload small, never relay untrusted commands.
             raw=payload.get("data")
             if len(str(raw))>12000: continue

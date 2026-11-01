@@ -208,7 +208,7 @@ enum NetworkError: LocalizedError {
         catch { alertText = error.localizedDescription; return nil }
     }
     func authorizedData(_ path:String) async throws -> Data {
-        var req = URLRequest(url:try url(path))
+        var req = URLRequest(url:try url(path),cachePolicy:.reloadIgnoringLocalCacheData)
         req.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization")
         let (data,response)=try await URLSession.shared.data(for:req)
         guard let res=response as? HTTPURLResponse,(200..<300).contains(res.statusCode) else {
@@ -256,7 +256,7 @@ enum NetworkError: LocalizedError {
     func downloadFile(_ file:ChatAttachment) async -> URL? {
         do {
             let data=try await authorizedData("/attachments/\(file.id)")
-            let base=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString,isDirectory:true)
+            let base=FileManager.default.temporaryDirectory.appendingPathComponent("NightwellAttachments",isDirectory:true).appendingPathComponent(UUID().uuidString,isDirectory:true)
             try FileManager.default.createDirectory(at:base,withIntermediateDirectories:true)
             let output=base.appendingPathComponent(URL(fileURLWithPath:file.filename).lastPathComponent)
             try data.write(to:output)
@@ -389,3 +389,4 @@ private struct AnyEncodable: Encodable {
     init(_ value: any Encodable) { self.encodeValue = value.encode }
     func encode(to encoder: Encoder) throws { try encodeValue(encoder) }
 }
+

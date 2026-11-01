@@ -261,7 +261,7 @@ public final class MainActivity extends Activity {
             });
             image.setOnClickListener(v->openAttachment(attachment));
         }else{
-            TextView file=bubble("📎 "+name+"\nНажми, чтобы открыть");
+            TextView file=bubble((type.startsWith("audio/")?"Голосовое сообщение":type.startsWith("video/")?"Видеосообщение":name)+"\nНажми, чтобы открыть");
             messages.addView(file);file.setOnClickListener(v->openAttachment(attachment));
         }
     }

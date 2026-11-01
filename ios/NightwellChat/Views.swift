@@ -7,11 +7,23 @@ import AVKit
 private let ink = Color.black
 private let white = Color.white
 private let muted = Color(white: 0.63)
+private let glassBlue = Color(red:0.38,green:0.66,blue:1.0)
+
+struct NightwellBackground: View {
+    var body:some View {
+        ZStack {
+            Color(red:0.025,green:0.035,blue:0.065)
+            RadialGradient(colors:[glassBlue.opacity(0.22),.clear],center:.topTrailing,startRadius:10,endRadius:450)
+            RadialGradient(colors:[Color.purple.opacity(0.12),.clear],center:.bottomLeading,startRadius:30,endRadius:380)
+        }.ignoresSafeArea()
+    }
+}
 
 struct GlassPanel: ViewModifier {
     func body(content: Content) -> some View {
-        content.padding(14).background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:22))
-            .overlay(RoundedRectangle(cornerRadius:22).stroke(white.opacity(0.14),lineWidth:1))
+        content.padding(14).background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:24))
+            .overlay(RoundedRectangle(cornerRadius:24).stroke(LinearGradient(colors:[white.opacity(0.32),white.opacity(0.04)],startPoint:.topLeading,endPoint:.bottomTrailing),lineWidth:1))
+            .shadow(color:.black.opacity(0.20),radius:16,y:8)
     }
 }
 extension View { func glass() -> some View { modifier(GlassPanel()) } }
@@ -24,7 +36,7 @@ struct RootView: View {
             else { InboxView() }
         }
         .tint(.white)
-        .background(ink.ignoresSafeArea())
+        .background(NightwellBackground())
         .alert("Nightwell Chat",isPresented:Binding(get:{ !store.alertText.isEmpty },set:{ if !$0 { store.alertText = "" } })) {
             Button("ОК",role:.cancel) { store.alertText = "" }
         } message: { Text(store.alertText) }

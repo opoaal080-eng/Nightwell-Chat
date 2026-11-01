@@ -112,7 +112,7 @@ public final class MainActivity extends Activity {
             int status=c.getResponseCode();InputStream input=status>=400?c.getErrorStream():c.getInputStream();
             byte[] result=input==null?new byte[0]:read(input,55*1024*1024);
             if(status>=400){
-                String message="HTTP "+status;
+                String message="HTTP "+status+" при запросе "+path;
                 try{JSONObject err=new JSONObject(new String(result,StandardCharsets.UTF_8));Object detail=err.opt("detail");if(detail instanceof String)message=(String)detail;}catch(Exception ignored){}
                 throw new IOException(message);
             }

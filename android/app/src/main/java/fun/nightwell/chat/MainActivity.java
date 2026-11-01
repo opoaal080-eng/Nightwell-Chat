@@ -55,12 +55,13 @@ public final class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);
         if(token.isEmpty())phoneLogin(false); else getMe(false);
     }
-    @Override protected void onDestroy(){handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){cancelVoice();handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
 
     int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
     GradientDrawable shape(int color){GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(dp(14));g.setStroke(dp(1),0xff333333);return g;}
     TextView label(String str,int size,int color){TextView t=new TextView(this);t.setText(str);t.setTextSize(size);t.setTextColor(color);t.setPadding(dp(3),dp(5),dp(3),dp(5));return t;}
     void enter(String dest){
+        if(voiceRecorder!=null && !"chat".equals(dest))cancelVoice();
         screen=dest;handler.removeCallbacks(refresh);
         scroller=new ScrollView(this);scroller.setFillViewport(true);
         page=new LinearLayout(this);page.setOrientation(1);page.setPadding(dp(16),dp(24),dp(16),dp(22));page.setBackgroundColor(BG);
@@ -260,6 +261,17 @@ public final class MainActivity extends Activity {
     }
     void releaseVoice(){
         if(voiceRecorder!=null){try{voiceRecorder.release();}catch(Exception ignored){} voiceRecorder=null;}
+    }
+    void cancelVoice(){
+        releaseVoice();
+        if(voiceFile!=null){voiceFile.delete();voiceFile=null;}
+    }
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults);
+        if(requestCode==102){
+            if(grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED && "chat".equals(screen))startVoice();
+            else note("Для голосовых сообщений нужен доступ к микрофону");
+        }
     }
     void finishVoice(){
         try{

@@ -315,31 +315,72 @@ struct VideoCircleBubble:View {
     @EnvironmentObject var store:ChatStore
     let file:ChatAttachment
     @State private var player:AVPlayer?
+    @State private var isLoading=false
+    @State private var showPlayer=false
+    @State private var loopObserver:NSObjectProtocol?
     var body:some View {
-        ZStack {
-            Circle().fill(.white.opacity(0.12))
-            if let player {
-                VideoPlayer(player:player).clipShape(Circle())
-            } else {
+        Button {
+            showPlayer=true
+        } label: {
+            ZStack {
+                Circle().fill(.white.opacity(0.12))
                 Image(systemName:"play.circle.fill")
-                    .font(.system(size:44)).foregroundStyle(.white)
+                    .font(.system(size:48)).foregroundStyle(.white)
             }
+            .frame(width:190,height:190)
         }
-        .frame(width:190,height:190)
-        .clipShape(Circle())
-        .onTapGesture {
-            Task {
+        .buttonStyle(.plain)
+        .sheet(isPresented:$showPlayer,onDismiss:stopPlayback) {
+            ZStack {
+                Color.black.ignoresSafeArea()
                 if let player {
-                    player.pause()
-                    self.player=nil
-                } else if let url=await store.downloadFile(file) {
-                    let newPlayer=AVPlayer(url:url)
-                    player=newPlayer
-                    newPlayer.play()
+                    VideoPlayer(player:player)
+                        .frame(width:300,height:300)
+                        .clipShape(Circle())
+                } else if isLoading {
+                    ProgressView("Загрузка кружка").tint(.white)
+                } else {
+                    ProgressView().tint(.white)
+                }
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button("Закрыть") {showPlayer=false}
+                            .padding(16)
+                    }
+                    Spacer()
                 }
             }
+            .task(id:file.id) {await startPlayback()}
         }
-        .onDisappear {player?.pause();player=nil}
+        .onDisappear {if !showPlayer {stopPlayback()}}
+    }
+    @MainActor private func startPlayback() async {
+        guard player == nil else {return}
+        isLoading=true
+        guard let url=await store.downloadFile(file) else {
+            isLoading=false
+            store.alertText="Не удалось загрузить видеосообщение"
+            showPlayer=false
+            return
+        }
+        guard showPlayer else {isLoading=false;return}
+        let newPlayer=AVPlayer(url:url)
+        player=newPlayer
+        loopObserver=NotificationCenter.default.addObserver(
+            forName:.AVPlayerItemDidPlayToEndTime,
+            object:newPlayer.currentItem,queue:.main
+        ) { _ in newPlayer.seek(to:.zero);newPlayer.play() }
+        isLoading=false
+        newPlayer.play()
+    }
+    private func stopPlayback() {
+        player?.pause()
+        player=nil
+        if let loopObserver {
+            NotificationCenter.default.removeObserver(loopObserver)
+            self.loopObserver=nil
+        }
     }
 }
 

@@ -158,6 +158,7 @@ struct InboxView: View {
     @State private var settings = false
     @State private var calls = false
     @State private var selected: Conversation?
+    @State private var chatFilter=0
     var body: some View {
         NavigationStack {
             ZStack {
@@ -165,7 +166,7 @@ struct InboxView: View {
                 if store.chats.isEmpty {
                     ContentUnavailableView("Пока нет переписок",systemImage:"bubble.left.and.bubble.right",description:Text("Найди пользователя и начни общение"))
                 } else {
-                    List(store.chats) { chat in
+                    List(store.chats.filter {chatFilter == 0 || $0.kind != "group"}) { chat in
                         Button { selected=chat } label: {
                             HStack(spacing:13) {
                                 AvatarCircle(person:chat.other_user,fallback:chat.title)
@@ -185,20 +186,43 @@ struct InboxView: View {
                 }
             }
             .navigationTitle("Чаты")
+            .toolbarBackground(.ultraThinMaterial,for:.navigationBar)
+            .safeAreaInset(edge:.top) {
+                HStack(spacing:3) {
+                    Button("Все") {chatFilter=0}
+                        .frame(maxWidth:.infinity).padding(.vertical,10)
+                        .background(chatFilter == 0 ? .white.opacity(0.17) : .clear,in:Capsule())
+                    Button("Personal") {chatFilter=1}
+                        .frame(maxWidth:.infinity).padding(.vertical,10)
+                        .background(chatFilter == 1 ? .white.opacity(0.17) : .clear,in:Capsule())
+                }
+                .font(.subheadline.weight(.medium))
+                .padding(4).background(.ultraThinMaterial,in:Capsule())
+                .padding(.horizontal,16).padding(.top,6)
+            }
             .safeAreaInset(edge:.bottom) {
-                HStack(spacing:20) {
-                    Button { findPeople=true } label: {
-                        Label("Контакты",systemImage:"person.2")
+                HStack(spacing:0) {
+                    Button {findPeople=true} label:{
+                        Label("Контакты",systemImage:"person.crop.circle.fill")
                     }
-                    Spacer()
-                    Button { settings=true } label: {
-                        Label("Профиль",systemImage:"person.crop.circle")
+                    Button {calls=true} label:{
+                        Label("Звонки",systemImage:"phone.fill")
+                    }
+                    Button {} label:{
+                        Label("Чаты",systemImage:"bubble.left.and.bubble.right.fill")
+                    }
+                    Button {settings=true} label:{
+                        Label("Настройки",systemImage:"gearshape.fill")
                     }
                 }
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal,24).padding(.vertical,12)
+                .font(.system(size:11,weight:.medium))
+                .labelStyle(.titleAndIcon)
+                .buttonStyle(.plain)
                 .frame(maxWidth:.infinity)
-                .background(.ultraThinMaterial)
+                .padding(.vertical,18).padding(.horizontal,8)
+                .background(.ultraThinMaterial,in:Capsule())
+                .overlay(Capsule().stroke(.white.opacity(0.12),lineWidth:1))
+                .padding(.horizontal,16).padding(.bottom,8)
             }
             .toolbar {
                 ToolbarItem(placement:.topBarLeading) { Button { settings=true } label:{ Image(systemName:"slider.horizontal.3") } }

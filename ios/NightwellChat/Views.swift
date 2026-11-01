@@ -348,7 +348,22 @@ struct ChatView: View {
                                     }
                                     if message.deleted == 0,let file=message.attachment {
                                         Button {
-                                            Task{preview=await store.downloadFile(file)}
+                                            Task {
+                                                if file.content_type.hasPrefix("audio/") {
+                                                    if playingAudioID == file.id {
+                                                        audioPlayer?.pause()
+                                                        audioPlayer = nil
+                                                        playingAudioID = nil
+                                                    } else if let url = await store.downloadFile(file) {
+                                                        audioPlayer?.pause()
+                                                        audioPlayer = AVPlayer(url: url)
+                                                        playingAudioID = file.id
+                                                        audioPlayer?.play()
+                                                    }
+                                                } else {
+                                                    preview = await store.downloadFile(file)
+                                                }
+                                            }
                                         } label: {
                                             if file.content_type.hasPrefix("image/"){
                                                 PrivateImage(attachment:file.id)

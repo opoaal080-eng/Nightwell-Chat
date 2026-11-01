@@ -1014,6 +1014,17 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    VStack(spacing:12) {
+                        AvatarCircle(person:store.me,fallback:store.me?.display_name ?? "N")
+                            .scaleEffect(1.5).frame(height:105)
+                        Text(store.me?.display_name ?? "Nightwell").font(.system(size:28,weight:.semibold))
+                        Text(store.me?.username ?? "").foregroundStyle(.secondary)
+                    }.frame(maxWidth:.infinity)
+                }
+                Section {
+                    NavigationLink {EditProfileView()} label:{Label("Изменить фотографию",systemImage:"camera.fill").foregroundStyle(.blue)}
+                }
                 Section("Профиль") {
                     NavigationLink {
                         EditProfileView()
@@ -1035,6 +1046,12 @@ struct SettingsView: View {
                     Text("Вход и регистрация по номеру доступны после выхода из аккаунта. Сначала привяжи номер к текущему профилю, чтобы сохранить чаты.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Section("Приложение") {
+                    Label("Уведомления и звуки",systemImage:"bell.badge.fill")
+                    Label("Конфиденциальность",systemImage:"lock.fill")
+                    Label("Данные и память",systemImage:"externaldrive.fill")
+                    Label("Оформление",systemImage:"circle.lefthalf.filled")
+                }
                 Section("Версия") {
                     Text("Nightwell Chat 0.7")
                 }
@@ -1046,7 +1063,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(muted)
                 }
                 Section { Button("Выйти из аккаунта",role:.destructive) { store.logout(); dismiss() } }
-            }.scrollContentBackground(.hidden).background(NightwellBackground())
+            }.scrollContentBackground(.hidden).background(Color.black.ignoresSafeArea())
                 .scrollDismissesKeyboard(.interactively)
                 .navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.ultraThinMaterial,for:.navigationBar)

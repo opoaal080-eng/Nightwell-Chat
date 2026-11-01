@@ -77,13 +77,21 @@ struct AvatarCircle: View {
 struct EditProfileView: View {
     @EnvironmentObject private var store:ChatStore
     @State private var picked:PhotosPickerItem?
+    @State private var savingAvatar=false
+    @State private var avatarPreview:UIImage?
     @State private var name=""
     var body:some View {
         Form {
             Section("Аватар") {
                 HStack {
-                    AvatarCircle(person:store.me,fallback:store.me?.display_name ?? "N")
+                    if let avatarPreview {
+                        Image(uiImage:avatarPreview).resizable().scaledToFill().frame(width:56,height:56).clipShape(Circle())
+                    } else {
+                        AvatarCircle(person:store.me,fallback:store.me?.display_name ?? "N")
+                    }
                     PhotosPicker("Выбрать фото",selection:$picked,matching:.images)
+                        .disabled(savingAvatar)
+                    if savingAvatar {ProgressView()}
                 }
             }
             Section("Имя") {
@@ -97,10 +105,25 @@ struct EditProfileView: View {
         .onAppear{name=store.me?.display_name ?? ""}
         .onChange(of:picked){_,item in
             Task {
+                savingAvatar=true
+                defer {savingAvatar=false}
                 guard let bytes=try? await item?.loadTransferable(type:Data.self),
-                      let img=UIImage(data:bytes),
-                      let jpg=img.jpegData(compressionQuality:0.86) else{return}
+                      let img=UIImage(data:bytes) else {
+                    store.alertText="Не удалось прочитать выбранную фотографию"
+                    return
+                }
+                let renderer=UIGraphicsImageRenderer(size:CGSize(width:512,height:512))
+                let jpg=renderer.jpegData(withCompressionQuality:0.83) { context in
+                    let side=min(img.size.width,img.size.height)
+                    let crop=CGRect(x:(img.size.width-side)/2,y:(img.size.height-side)/2,width:side,height:side)
+                    if let cg=img.cgImage?.cropping(to:crop) {
+                        UIImage(cgImage:cg,scale:img.scale,orientation:img.imageOrientation).draw(in:CGRect(x:0,y:0,width:512,height:512))
+                    } else {
+                        img.draw(in:CGRect(x:0,y:0,width:512,height:512))
+                    }
+                }
                 await store.updateAvatar(jpg)
+                if store.alertText.isEmpty {avatarPreview=UIImage(data:jpg)}
             }
         }
     }

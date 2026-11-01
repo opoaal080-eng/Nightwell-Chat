@@ -106,11 +106,11 @@ public final class MainActivity extends Activity {
         URL url=new URL(HOST+path);
         HttpURLConnection c=(HttpURLConnection)url.openConnection();
         try{
-            c.setConnectTimeout(18000);c.setReadTimeout(35000);c.setRequestMethod(method);
+            c.setConnectTimeout(20000);c.setReadTimeout(body!=null && mime.startsWith("multipart/")?180000:45000);c.setRequestMethod(method);
             if(!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);
-            if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type",mime);try(OutputStream o=c.getOutputStream()){o.write(body);}}
+            if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type",mime);c.setFixedLengthStreamingMode(body.length);try(OutputStream o=c.getOutputStream()){o.write(body);}}
             int status=c.getResponseCode();InputStream input=status>=400?c.getErrorStream():c.getInputStream();
-            byte[] result=input==null?new byte[0]:read(input,22*1024*1024);
+            byte[] result=input==null?new byte[0]:read(input,55*1024*1024);
             if(status>=400){
                 String message="HTTP "+status;
                 try{JSONObject err=new JSONObject(new String(result,StandardCharsets.UTF_8));Object detail=err.opt("detail");if(detail instanceof String)message=(String)detail;}catch(Exception ignored){}

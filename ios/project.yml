@@ -28,6 +28,7 @@ targets:
         CFBundleVersion: '7'
         UILaunchScreen: {}
         NSContactsUsageDescription: "Доступ нужен для показа адресной книги на устройстве и поиска выбранного номера в Nightwell Chat."
-        NSMicrophoneUsageDescription: "Микрофон используется для голосовых звонков Nightwell Chat."
+        NSMicrophoneUsageDescription: "Микрофон используется для звонков и записи голосовых сообщений Nightwell Chat."
+        NSCameraUsageDescription: "Камера используется для видеозвонков и записи видеосообщений Nightwell Chat."
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false

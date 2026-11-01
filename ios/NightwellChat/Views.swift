@@ -536,6 +536,8 @@ struct ChatView: View {
     @StateObject private var voiceRecorder = NightwellVoiceRecorder()
     @FocusState private var composerFocused:Bool
     @State private var showingFilePicker=false
+    @State private var showingPhotoPicker=false
+    @State private var recordingModeVideo=false
     @State private var showingVideoRecorder=false
     @State private var preview:URL?
     @State private var audioPlayer: AVPlayer?
@@ -642,70 +644,50 @@ struct ChatView: View {
                     .padding(.horizontal,16).padding(.top,6)
             }
             HStack(alignment:.bottom,spacing:10) {
-                ScrollView(.horizontal,showsIndicators:false) {
-                    HStack(spacing:14) {
-                    PhotosPicker(selection:$pickedPhoto,matching:.images) {
-                        VStack(spacing:2) {
-                            Image(systemName:"photo").font(.title2)
-                            Text("Фото").font(.system(size:10))
-                        }
-                    }.disabled(uploading)
-                    Button { showingFilePicker=true } label: {
-                        VStack(spacing:2) {
-                            Image(systemName:"paperclip").font(.title2)
-                            Text("Файл").font(.system(size:10))
-                        }
-                    }.disabled(uploading)
-                    Button {
-                        Task {
-                            if voiceRecorder.isRecording {
-                                if let file = voiceRecorder.finish(), let data = try? Data(contentsOf: file) {
-                                    uploading = true
-                                    await store.sendFile(chatID: chat.id, bytes: data, filename: "voice.m4a", mime: "audio/mp4")
-                                    try? FileManager.default.removeItem(at: file)
-                                    await reload()
-                                    uploading = false
-                                }
-                            } else {
-                                await voiceRecorder.start()
-                                if let error = voiceRecorder.errorMessage { store.alertText = error }
-                            }
-                        }
-                    } label: {
-                        VStack(spacing: 2) {
-                            Image(systemName: voiceRecorder.isRecording ? "stop.circle.fill" : "mic.fill").font(.title2)
-                            Text(voiceRecorder.isRecording ? "Стоп" : "Голос").font(.system(size: 10))
-                        }
-                    }.disabled(uploading)
-                    Button {
-                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                            showingVideoRecorder=true
-                        } else {
-                            store.alertText="На этом устройстве нет камеры для записи видеосообщений"
-                        }
-                    } label: {
-                        VStack(spacing:2) {
-                            Image(systemName:"video.circle.fill").font(.title2)
-                            Text("Кружок").font(.system(size:10))
-                        }
-                    }.disabled(uploading)
-                    }
-                    .frame(minHeight:48)
-                }
-                .frame(width:174)
-                if composerFocused {
-                    Button { composerFocused=false } label: {
-                        Image(systemName:"keyboard.chevron.compact.down").font(.title3)
-                    }.accessibilityLabel("Скрыть клавиатуру")
-                }
-                                TextField("Сообщение",text:$draft,axis:.vertical)
+                Menu {
+                    Button("Фото",systemImage:"photo") { showingPhotoPicker=true }
+                    Button("Файл",systemImage:"paperclip") { showingFilePicker=true }
+                    Button("Видеокружок",systemImage:"video.circle") { showingVideoRecorder=true }
+                } label: {
+                    Image(systemName:"paperclip").font(.title2)
+                        .frame(width:38,height:42)
+                }.disabled(uploading)
+                TextField("Сообщение",text:$draft,axis:.vertical)
                     .focused($composerFocused)
                     .lineLimit(1...5).padding(12)
                     .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:18))
-                Button { Task { await submit() } } label: {
-                    Image(systemName:"arrow.up").font(.headline)
-                        .foregroundStyle(.black).frame(width:42,height:42).background(.white,in:Circle())
-                }.disabled(draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                if !draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
+                    Button { Task { await submit() } } label: {
+                        Image(systemName:"arrow.up").font(.headline)
+                            .foregroundStyle(.black).frame(width:42,height:42).background(.white,in:Circle())
+                    }
+                } else {
+                    Button {
+                        if recordingModeVideo {
+                            showingVideoRecorder=true
+                        } else {
+                            Task {
+                                if voiceRecorder.isRecording {
+                                    if let file=voiceRecorder.finish(),let data=try? Data(contentsOf:file) {
+                                        uploading=true
+                                        let success=await store.sendFile(chatID:chat.id,bytes:data,filename:"voice.m4a",mime:"audio/mp4")
+                                        try? FileManager.default.removeItem(at:file)
+                                        if success {await reload()}
+                                        uploading=false
+                                    }
+                                } else {
+                                    await voiceRecorder.start()
+                                    if let error=voiceRecorder.errorMessage {store.alertText=error}
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName:voiceRecorder.isRecording ? "stop.circle.fill" : (recordingModeVideo ? "video.circle.fill" : "mic.fill"))
+                            .font(.title2).frame(width:42,height:42)
+                    }
+                    .simultaneousGesture(TapGesture(count:2).onEnded {recordingModeVideo.toggle()})
+                    .disabled(uploading)
+                }
             }.padding(12).background(ink)
         }
         .background(ink)
@@ -744,6 +726,7 @@ struct ChatView: View {
                 }
             }, onClose: { showingVideoRecorder=false }).ignoresSafeArea()
         }
+        .photosPicker(isPresented:$showingPhotoPicker,selection:$pickedPhoto,matching:.images)
         .fileImporter(isPresented:$showingFilePicker,allowedContentTypes:[.item]){
             result in
             guard case .success(let file)=result else{return}

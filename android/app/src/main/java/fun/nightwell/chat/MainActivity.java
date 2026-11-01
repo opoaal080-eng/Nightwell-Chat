@@ -38,6 +38,7 @@ public final class MainActivity extends Activity {
     boolean loading=false;
     MediaRecorder voiceRecorder;
     File voiceFile;
+    long voiceStartedAt=0;
     final Runnable refresh=new Runnable(){ @Override public void run(){
         if("chat".equals(screen))loadMessages(false);
         else if("inbox".equals(screen)){loadChats();checkIncoming();}
@@ -256,6 +257,7 @@ public final class MainActivity extends Activity {
             voiceRecorder.setOutputFile(voiceFile.getAbsolutePath());
             voiceRecorder.prepare();
             voiceRecorder.start();
+            voiceStartedAt=System.currentTimeMillis();
             note("Запись началась. Нажми ещё раз, чтобы отправить.");
         }catch(Exception e){note("Ошибка микрофона: "+e.getMessage());releaseVoice();}
     }
@@ -274,6 +276,9 @@ public final class MainActivity extends Activity {
         }
     }
     void finishVoice(){
+        if(System.currentTimeMillis()-voiceStartedAt<1000){
+            note("Запись слишком короткая");cancelVoice();return;
+        }
         try{
             voiceRecorder.stop();
             releaseVoice();

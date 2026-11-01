@@ -224,9 +224,14 @@ enum NetworkError: LocalizedError {
         let safeName=filename.replacingOccurrences(of:"\"",with:"_").replacingOccurrences(of:"\\",with:"_")
         var body=Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(safeName)\"\r\nContent-Type: \(mime)\r\n\r\n".utf8)
         body.append(bytes);body.append(Data("\r\n--\(boundary)--\r\n".utf8));req.httpBody=body
-        let (_,response)=try await URLSession.shared.data(for:req)
-        guard let status=response as? HTTPURLResponse,(200..<300).contains(status.statusCode) else {
-            throw NetworkError.server("Загрузка не удалась")
+        let (responseData,response)=try await URLSession.shared.data(for:req)
+        guard let status=response as? HTTPURLResponse else {
+            throw NetworkError.server("Сервер не ответил на загрузку")
+        }
+        guard (200..<300).contains(status.statusCode) else {
+            let detail=(try? JSONSerialization.jsonObject(with:responseData) as? [String:Any])?["detail"]
+            let reason=(detail as? String) ?? String(data:responseData,encoding:.utf8) ?? ""
+            throw NetworkError.server("Ошибка загрузки HTTP \(status.statusCode): \(String(reason.prefix(240)))")
         }
         eventVersion += 1
     }

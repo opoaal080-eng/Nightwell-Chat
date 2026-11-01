@@ -568,7 +568,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             onClose?();return
         }
         exporter.outputURL=result
-        exporter.outputFileType=.mov
+        exporter.outputFileType = .mov
         exporter.exportAsynchronously { [weak self] in
             DispatchQueue.main.async {
                 if exporter.status == .completed {self?.onVideo?(result)}

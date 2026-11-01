@@ -240,9 +240,9 @@ enum NetworkError: LocalizedError {
         do { try await upload(bytes,to:"/me/avatar",filename:"avatar.jpg",mime:"image/jpeg");me = try await request("/me") }
         catch { alertText=error.localizedDescription }
     }
-    func sendFile(chatID:Int,bytes:Data,filename:String,mime:String) async {
-        do { try await upload(bytes,to:"/chats/\(chatID)/attachments",filename:filename,mime:mime) }
-        catch { alertText=error.localizedDescription }
+    @discardableResult func sendFile(chatID:Int,bytes:Data,filename:String,mime:String) async -> Bool {
+        do { try await upload(bytes,to:"/chats/\(chatID)/attachments",filename:filename,mime:mime);return true }
+        catch { alertText=error.localizedDescription;return false }
     }
     func downloadFile(_ file:ChatAttachment) async -> URL? {
         do {

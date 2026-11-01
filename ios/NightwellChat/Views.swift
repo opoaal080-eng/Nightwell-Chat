@@ -412,6 +412,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     private var segments:[URL]=[]
     private var switching=false
     private var cancelled=false
+    var stopWhenReady=false
     private let session=AVCaptureSession()
     private let output=AVCaptureMovieFileOutput()
     private let preview=AVCaptureVideoPreviewLayer()
@@ -502,10 +503,18 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             configure()
         }
     }
+    var isRecordingCircle:Bool {output.isRecording}
+    func finishCircle(){if output.isRecording {output.stopRecording()}}
     @objc private func toggleRecording(){
         if output.isRecording {output.stopRecording();return}
         let url=FileManager.default.temporaryDirectory.appendingPathComponent("circle_\(UUID().uuidString).mov")
         output.startRecording(to:url,recordingDelegate:self)
+        if stopWhenReady {
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.35) { [weak self] in
+                guard let self,self.output.isRecording else{return}
+                self.output.stopRecording()
+            }
+        }
         started=Date()
         record.backgroundColor = .systemRed
         ticker?.invalidate()
@@ -593,14 +602,21 @@ struct VideoCircleRecorder:UIViewControllerRepresentable {
     let onVideo:(URL)->Void
     let onClose:()->Void
     var autoStart=false
+    var stopRequested=false
     func makeUIViewController(context:Context)->CircleCaptureController {
         let controller=CircleCaptureController()
         controller.onVideo=onVideo
         controller.onClose=onClose
         controller.autoStart=autoStart
+        controller.stopWhenReady=stopRequested
         return controller
     }
-    func updateUIViewController(_ controller:CircleCaptureController,context:Context){}
+    func updateUIViewController(_ controller:CircleCaptureController,context:Context){
+        if stopRequested && !controller.stopWhenReady {
+            controller.stopWhenReady=true
+            if controller.isRecordingCircle {controller.finishCircle()}
+        }
+    }
 }
 
 struct ChatView: View {
@@ -620,6 +636,9 @@ struct ChatView: View {
     @State private var showingPhotoPicker=false
     @State private var recordingModeVideo=false
     @State private var startCircleImmediately=false
+    @State private var stopCircleRequested=false
+    @State private var mediaPressing=false
+    @State private var mediaLongPress=false
     @State private var showingVideoRecorder=false
     @State private var preview:URL?
     @State private var audioPlayer: AVPlayer?
@@ -747,6 +766,7 @@ struct ChatView: View {
                     Button {
                         if recordingModeVideo {
                             startCircleImmediately=false
+                            stopCircleRequested=false
                             showingVideoRecorder=true
                         } else {
                             Task {
@@ -769,12 +789,28 @@ struct ChatView: View {
                             .font(.title2).frame(width:42,height:42)
                     }
                     .simultaneousGesture(TapGesture(count:2).onEnded {recordingModeVideo.toggle()})
-                    .simultaneousGesture(LongPressGesture(minimumDuration:0.45).onEnded { _ in
-                        if recordingModeVideo {
-                            startCircleImmediately=true
-                            showingVideoRecorder=true
+                    .simultaneousGesture(DragGesture(minimumDistance:0)
+                        .onChanged { _ in
+                            if !mediaPressing {
+                                mediaPressing=true
+                                mediaLongPress=false
+                                DispatchQueue.main.asyncAfter(deadline:.now()+0.45) {
+                                    if mediaPressing && recordingModeVideo && !uploading {
+                                        mediaLongPress=true
+                                        startCircleImmediately=true
+                                        stopCircleRequested=false
+                                        showingVideoRecorder=true
+                                    }
+                                }
+                            }
                         }
-                    })
+                        .onEnded { _ in
+                            mediaPressing=false
+                            if mediaLongPress {
+                                stopCircleRequested=true
+                                mediaLongPress=false
+                            }
+                        })
                     .disabled(uploading)
                 }
             }.padding(12).background(ink)
@@ -813,7 +849,7 @@ struct ChatView: View {
                     if success {await reload()}
                     uploading=false
                 }
-            }, onClose: { showingVideoRecorder=false }, autoStart:startCircleImmediately).ignoresSafeArea()
+            }, onClose: { showingVideoRecorder=false; stopCircleRequested=false }, autoStart:startCircleImmediately, stopRequested:stopCircleRequested).ignoresSafeArea()
         }
         .photosPicker(isPresented:$showingPhotoPicker,selection:$pickedPhoto,matching:.images)
         .fileImporter(isPresented:$showingFilePicker,allowedContentTypes:[.item]){

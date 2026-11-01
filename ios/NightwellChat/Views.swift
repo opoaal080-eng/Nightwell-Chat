@@ -418,6 +418,8 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     private let preview=AVCaptureVideoPreviewLayer()
     private let record=UIButton(type:.system)
     private let flip=UIButton(type:.system)
+    private let flash=UIButton(type:.system)
+    private var torchEnabled=false
     private let timer=UILabel()
     private var cameraPosition:AVCaptureDevice.Position = .front
     private var started:Date?
@@ -439,6 +441,10 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         flip.tintColor = .white
         flip.addTarget(self,action:#selector(switchCamera),for:.touchUpInside)
         view.addSubview(flip)
+        flash.setImage(UIImage(systemName:"bolt.slash.fill"),for:.normal)
+        flash.tintColor = .white
+        flash.addTarget(self,action:#selector(toggleFlash),for:.touchUpInside)
+        view.addSubview(flash)
         record.backgroundColor = .white
         record.layer.borderColor=UIColor.systemRed.cgColor
         record.layer.borderWidth=5
@@ -466,6 +472,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         record.frame=CGRect(x:(view.bounds.width-76)/2,y:y+side+42,width:76,height:76)
         record.layer.cornerRadius=38
         flip.frame=CGRect(x:view.bounds.width-88,y:y+side+54,width:60,height:54)
+        flash.frame=CGRect(x:28,y:y+side+54,width:60,height:54)
         timer.frame=CGRect(x:0,y:y-44,width:view.bounds.width,height:30)
     }
     private func configure(){
@@ -482,6 +489,9 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             session.addInput(audio)
         }
         output.maxRecordedDuration=CMTime(seconds:60,preferredTimescale:600)
+        flash.isEnabled=device.hasTorch
+        if !device.hasTorch {torchEnabled=false}
+        updateFlashIcon()
         session.commitConfiguration()
         DispatchQueue.global(qos:.userInitiated).async {[weak self] in
             guard let self else{return}
@@ -494,7 +504,25 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             }
         }
     }
+    private func updateFlashIcon(){
+        flash.setImage(UIImage(systemName:torchEnabled ? "bolt.fill" : "bolt.slash.fill"),for:.normal)
+        flash.tintColor = torchEnabled ? .systemYellow : .white
+    }
+    @objc private func toggleFlash(){
+        guard let device=AVCaptureDevice.default(.builtInWideAngleCamera,for:.video,position:cameraPosition),
+              device.hasTorch else {return}
+        do {
+            try device.lockForConfiguration()
+            let enable = !torchEnabled
+            device.torchMode = enable ? .on : .off
+            device.unlockForConfiguration()
+            torchEnabled=enable
+            updateFlashIcon()
+        } catch {torchEnabled=false;updateFlashIcon()}
+    }
     @objc private func switchCamera(){
+        torchEnabled=false
+        updateFlashIcon()
         if output.isRecording {
             switching=true
             output.stopRecording()
@@ -748,7 +776,6 @@ struct ChatView: View {
                 Menu {
                     Button("Фото",systemImage:"photo") { showingPhotoPicker=true }
                     Button("Файл",systemImage:"paperclip") { showingFilePicker=true }
-                    Button("Видеокружок",systemImage:"video.circle") { showingVideoRecorder=true }
                 } label: {
                     Image(systemName:"paperclip").font(.title2)
                         .frame(width:38,height:42)
@@ -764,8 +791,14 @@ struct ChatView: View {
                     }
                 } else {
                     Button {
+                        recordingModeVideo.toggle()
+                    } label: {
+                        Image(systemName:recordingModeVideo ? "video.circle.fill" : "mic.fill")
+                            .font(.title2).frame(width:42,height:42)
+                    }
+                    .simultaneousGesture(LongPressGesture(minimumDuration:0.4).onEnded { _ in
                         if recordingModeVideo {
-                            startCircleImmediately=false
+                            startCircleImmediately=true
                             stopCircleRequested=false
                             showingVideoRecorder=true
                         } else {
@@ -784,33 +817,7 @@ struct ChatView: View {
                                 }
                             }
                         }
-                    } label: {
-                        Image(systemName:voiceRecorder.isRecording ? "stop.circle.fill" : (recordingModeVideo ? "video.circle.fill" : "mic.fill"))
-                            .font(.title2).frame(width:42,height:42)
-                    }
-                    .simultaneousGesture(TapGesture(count:2).onEnded {recordingModeVideo.toggle()})
-                    .simultaneousGesture(DragGesture(minimumDistance:0)
-                        .onChanged { _ in
-                            if !mediaPressing {
-                                mediaPressing=true
-                                mediaLongPress=false
-                                DispatchQueue.main.asyncAfter(deadline:.now()+0.45) {
-                                    if mediaPressing && recordingModeVideo && !uploading {
-                                        mediaLongPress=true
-                                        startCircleImmediately=true
-                                        stopCircleRequested=false
-                                        showingVideoRecorder=true
-                                    }
-                                }
-                            }
-                        }
-                        .onEnded { _ in
-                            mediaPressing=false
-                            if mediaLongPress {
-                                stopCircleRequested=true
-                                mediaLongPress=false
-                            }
-                        })
+                    })
                     .disabled(uploading)
                 }
             }.padding(12).background(ink)

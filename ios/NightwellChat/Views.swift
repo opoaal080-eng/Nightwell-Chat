@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 import QuickLook
+import AVKit
 
 private let ink = Color.black
 private let white = Color.white
@@ -325,6 +326,8 @@ struct ChatView: View {
     @FocusState private var composerFocused:Bool
     @State private var showingFilePicker=false
     @State private var preview:URL?
+    @State private var audioPlayer: AVPlayer?
+    @State private var playingAudioID: Int?
     @State private var showingCall=false
     @State private var callURL:URL?
     var body: some View {

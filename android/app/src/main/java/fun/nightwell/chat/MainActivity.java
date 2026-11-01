@@ -12,9 +12,6 @@ import android.net.Uri;
 import android.media.MediaRecorder;
 import android.media.MediaPlayer;
 import android.media.MediaMetadataRetriever;
-import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.ClipDrawable;
-import android.graphics.drawable.GradientDrawable;
 import android.os.*;
 import android.provider.ContactsContract;
 import android.provider.OpenableColumns;
@@ -523,7 +520,7 @@ public final class MainActivity extends Activity {
             if(mime==null||!mime.startsWith("video/"))mime="video/mp4";
             if(data.length==0)throw new IOException("Пустой видеофайл");
             String extension="video/3gpp".equals(mime)?"3gp":("video/quicktime".equals(mime)?"mov":("video/webm".equals(mime)?"webm":"mp4"));
-            return multipart("/chats/"+cid+"/attachments","video_message."+extension,mime,data);
+            return multipart("/chats/"+cid+"/attachments","video_circle."+extension,mime,data);
         },result->loadMessages(true));
     }
     @Override protected void onActivityResult(int request,int result,Intent data){

@@ -50,7 +50,7 @@ public final class MainActivity extends Activity {
         if(Build.VERSION.SDK_INT>=33 &&
           checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);
-        if(token.isEmpty())login(false); else getMe(false);
+        if(token.isEmpty())phoneLogin(false); else getMe(false);
     }
     @Override protected void onDestroy(){handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
 
@@ -132,6 +132,36 @@ public final class MainActivity extends Activity {
         });
         btn(register?"Уже есть аккаунт? Войти":"Создать аккаунт",()->login(!register));
         hint("Номер телефона не нужен. Логин используется для входа и поиска в чате.");
+    }
+    void phoneLogin(boolean register){
+        enter("login");
+        heading("NIGHTWELL CHAT");
+        hint(register?"Регистрация по номеру телефона":"Вход по номеру телефона");
+        EditText number=field("+79991234567",false);
+        number.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        EditText name=register?field("Имя в чатах",false):null;
+        EditText password=field("Пароль (минимум 8 символов)",true);
+        btn(register?"Зарегистрироваться":"Войти",()->{
+            String phone=number.getText().toString().trim();
+            String pass=password.getText().toString();
+            String display=name==null?"":name.getText().toString().trim();
+            if(phone.length()<8||phone.length()>35){note("Введи номер с кодом страны");return;}
+            if(pass.length()<8||pass.length()>256){note("Пароль: от 8 до 256 символов");return;}
+            if(register&&display.isEmpty()){note("Укажи имя");return;}
+            perform(()->{
+                JSONObject args=payload("phone",phone,"password",pass);
+                if(register){args.put("display_name",display);args.put("discoverable",false);}
+                return http(register?"/auth/phone/register":"/auth/phone/login","POST",args);
+            },bytes->{
+                JSONObject result=json(bytes);
+                token=result.getString("access_token");
+                getPreferences(0).edit().putString("accessToken",token).apply();
+                getMe(false);
+            });
+        });
+        btn(register?"Уже есть аккаунт? Войти":"Создать аккаунт",()->phoneLogin(!register));
+        btn("Войти по логину",()->login(false));
+        hint("SMS пока нет: проверяется формат номера, а не владение SIM-картой.");
     }
     void getMe(boolean toProfile){perform(()->http("/me","GET",null),b->{
         myself=json(b);meId=myself.optInt("id");

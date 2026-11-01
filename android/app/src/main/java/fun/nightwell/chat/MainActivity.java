@@ -9,6 +9,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.media.MediaRecorder;
 import android.os.*;
 import android.provider.ContactsContract;
 import android.provider.OpenableColumns;
@@ -35,6 +36,8 @@ public final class MainActivity extends Activity {
     LinearLayout page, messages;
     ScrollView scroller;
     boolean loading=false;
+    MediaRecorder voiceRecorder;
+    File voiceFile;
     final Runnable refresh=new Runnable(){ @Override public void run(){
         if("chat".equals(screen))loadMessages(false);
         else if("inbox".equals(screen)){loadChats();checkIncoming();}
@@ -228,11 +231,49 @@ public final class MainActivity extends Activity {
         btn("Отправить",()->{String msg=draft.getText().toString().trim();if(msg.isEmpty())return;
             int cid=chatId;perform(()->http("/chats/"+cid+"/messages","POST",payload("body",msg)),b->{draft.setText("");loadMessages(true);});
         });
+        btn("Голосовое сообщение",()->{
+            if(voiceRecorder!=null)finishVoice();
+            else if(Build.VERSION.SDK_INT>=23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)
+                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},102);
+            else startVoice();
+        });
         btn("＋ Фото или файл",()->{
             Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);pick.addCategory(Intent.CATEGORY_OPENABLE);pick.setType("*/*");
             startActivityForResult(pick,PICK_ATTACHMENT);
         });
         loadMessages(true);handler.postDelayed(refresh,6500);
+    }
+    void startVoice(){
+        try{
+            voiceFile=File.createTempFile("nightwell_voice_",".m4a",getCacheDir());
+            voiceRecorder=new MediaRecorder();
+            voiceRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            voiceRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+            voiceRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+            voiceRecorder.setAudioEncodingBitRate(64000);
+            voiceRecorder.setAudioSamplingRate(44100);
+            voiceRecorder.setOutputFile(voiceFile.getAbsolutePath());
+            voiceRecorder.prepare();
+            voiceRecorder.start();
+            note("Запись началась. Нажми ещё раз, чтобы отправить.");
+        }catch(Exception e){note("Ошибка микрофона: "+e.getMessage());releaseVoice();}
+    }
+    void releaseVoice(){
+        if(voiceRecorder!=null){try{voiceRecorder.release();}catch(Exception ignored){} voiceRecorder=null;}
+    }
+    void finishVoice(){
+        try{
+            voiceRecorder.stop();
+            releaseVoice();
+            File recorded=voiceFile;
+            int cid=chatId;
+            perform(()->{
+                byte[] bytes;
+                try(FileInputStream in=new FileInputStream(recorded)){bytes=in.readAllBytes();}
+                try{return multipart("/chats/"+cid+"/attachments","voice.m4a","audio/mp4",bytes);}
+                finally{recorded.delete();}
+            },result->loadMessages(true));
+        }catch(Exception e){note("Не удалось завершить запись: "+e.getMessage());releaseVoice();}
     }
     void loadMessages(boolean scroll){if(loading||!"chat".equals(screen))return;loading=true;int cid=chatId;
         perform(()->http("/chats/"+cid+"/messages","GET",null),b->{

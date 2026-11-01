@@ -311,6 +311,17 @@ struct GroupView: View {
     }
 }
 
+struct VoiceWaveform:View {
+    var body:some View {
+        HStack(alignment:.center,spacing:3) {
+            ForEach(0..<28,id:\.self){i in
+                Capsule().fill(.white.opacity(0.8))
+                    .frame(width:3,height:CGFloat(5+(i*17+i*i*3)%22))
+            }
+        }.frame(height:32)
+    }
+}
+
 struct VideoCircleBubble:View {
     @EnvironmentObject var store:ChatStore
     let file:ChatAttachment
@@ -470,7 +481,7 @@ struct ChatView: View {
                                             if file.content_type.hasPrefix("image/"){
                                                 PrivateImage(attachment:file.id)
                                             } else if file.content_type.hasPrefix("audio/") {
-                                                Label(playingAudioID == file.id ? "Остановить голосовое" : "Слушать голосовое",systemImage:playingAudioID == file.id ? "pause.circle.fill" : "play.circle.fill")
+                                                HStack(spacing:10) { Image(systemName:playingAudioID == file.id ? "pause.circle.fill" : "play.circle.fill").font(.title2); VoiceWaveform() }
                                             } else if file.content_type.hasPrefix("video/") {
                                                 Label("Видеосообщение",systemImage:"play.rectangle.fill")
                                             } else {

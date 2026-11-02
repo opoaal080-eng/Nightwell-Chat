@@ -123,6 +123,9 @@ enum NetworkError: LocalizedError {
     }
 
     func request<T: Decodable>(_ path: String, method: String = "GET", body: (any Encodable)? = nil, authenticated: Bool = true) async throws -> T {
+        #if DEBUG
+        if ReferencePreview.enabled {return try JSONDecoder().decode(T.self,from:ReferencePreview.data(path))}
+        #endif
         var req = URLRequest(url: try url(path))
         req.httpMethod = method
         req.timeoutInterval = 20
@@ -235,7 +238,12 @@ enum NetworkError: LocalizedError {
         }
         eventVersion += 1
     }
-    func loadAvatar(_ id:Int) async -> Data? { try? await authorizedData("/users/\(id)/avatar") }
+    func loadAvatar(_ id:Int) async -> Data? {
+        #if DEBUG
+        if ReferencePreview.enabled {return nil}
+        #endif
+        return try? await authorizedData("/users/\(id)/avatar")
+    }
     @discardableResult func updateAvatar(_ bytes:Data) async -> Bool {
         do {
             try await upload(bytes,to:"/me/avatar",filename:"avatar.jpg",mime:"image/jpeg")

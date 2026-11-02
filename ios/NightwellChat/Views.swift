@@ -170,113 +170,6 @@ struct LegacyLoginView: View {
     }
 }
 
-struct InboxView: View {
-    @EnvironmentObject var store: ChatStore
-    @State private var findPeople = false
-    @State private var group = false
-    @State private var settings = false
-    @State private var calls = false
-    @State private var selected: Conversation?
-    @State private var chatFilter=0
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                NightwellBackground()
-                if store.chats.isEmpty {
-                    ContentUnavailableView("Пока нет переписок",systemImage:"bubble.left.and.bubble.right",description:Text("Найди пользователя и начни общение"))
-                } else {
-                    List(store.chats.filter {chatFilter == 0 || $0.kind != "group"}) { chat in
-                        Button { selected=chat } label: {
-                            HStack(spacing:13) {
-                                AvatarCircle(person:chat.other_user,fallback:chat.title)
-                                VStack(alignment:.leading,spacing:5) {
-                                    HStack {
-                                        Text(chat.title).font(.headline).foregroundStyle(.white)
-                                        Spacer()
-                                        if chat.unread > 0 { Text("\(chat.unread)").font(.caption.bold()).foregroundStyle(.black)
-                                            .padding(.horizontal,8).padding(.vertical,4).background(.white,in:Capsule()) }
-                                    }
-                                    Text(chat.last_message?.body ?? (chat.kind == "group" ? "Новая группа" : "Новый чат"))
-                                        .font(.subheadline).foregroundStyle(muted).lineLimit(1)
-                                }
-                            }.padding(.vertical,6)
-                        }.listRowBackground(Color.white.opacity(0.045))
-                    }.scrollContentBackground(.hidden)
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden,for:.navigationBar)
-            .safeAreaInset(edge:.top,spacing:0) {
-                VStack(spacing:12) {
-                    HStack(spacing:12) {
-                        Button {settings=true} label:{
-                            Image(systemName:"line.3.horizontal")
-                                .font(.system(size:20,weight:.medium))
-                                .frame(width:44,height:44)
-                                .background(.ultraThinMaterial,in:Circle())
-                        }
-                        Spacer()
-                        Text("Чаты").font(.system(size:22,weight:.semibold,design:.rounded))
-                        Spacer()
-                        Button {group=true} label:{
-                            Image(systemName:"person.2.badge.plus")
-                                .font(.system(size:19)).frame(width:44,height:44)
-                                .background(.ultraThinMaterial,in:Circle())
-                        }
-                        Button {findPeople=true} label:{
-                            Image(systemName:"square.and.pencil")
-                                .font(.system(size:19)).frame(width:44,height:44)
-                                .background(glassBlue.opacity(0.72),in:Circle())
-                        }
-                    }
-                    HStack(spacing:4) {
-                        Button {withAnimation(.easeInOut(duration:0.2)){chatFilter=0}} label:{
-                            Text("Все").frame(maxWidth:.infinity).padding(.vertical,10)
-                                .background(chatFilter == 0 ? .white.opacity(0.19) : .clear,in:Capsule())
-                        }
-                        Button {withAnimation(.easeInOut(duration:0.2)){chatFilter=1}} label:{
-                            Text("Личные").frame(maxWidth:.infinity).padding(.vertical,10)
-                                .background(chatFilter == 1 ? .white.opacity(0.19) : .clear,in:Capsule())
-                        }
-                    }
-                    .font(.system(size:14,weight:.semibold))
-                    .padding(4).modifier(FloatingGlass())
-                    .overlay(Capsule().stroke(.white.opacity(0.15)))
-                }
-                .padding(.horizontal,16).padding(.top,10).padding(.bottom,12)
-                .background(.ultraThinMaterial)
-            }
-            .safeAreaInset(edge:.bottom,spacing:0) {
-                HStack(spacing:0) {
-                    Button {findPeople=true} label:{Image(systemName:"person.crop.circle").frame(maxWidth:.infinity).frame(height:44)}.accessibilityLabel("Контакты")
-                    Button {calls=true} label:{Image(systemName:"phone").frame(maxWidth:.infinity).frame(height:44)}.accessibilityLabel("Звонки")
-                    Image(systemName:"bubble.left.and.bubble.right.fill")
-                        .foregroundStyle(glassBlue)
-                        .frame(maxWidth:.infinity)
-                    Button {settings=true} label:{Image(systemName:"gearshape").frame(maxWidth:.infinity).frame(height:44)}.accessibilityLabel("Настройки")
-                }
-                .font(.system(size:23,weight:.regular))
-                .buttonStyle(.plain)
-                .frame(maxWidth:.infinity)
-                .frame(height:54)
-                .padding(.horizontal,12)
-                .modifier(FloatingGlass())
-                .overlay(Capsule().stroke(LinearGradient(colors:[.white.opacity(0.35),.white.opacity(0.05)],startPoint:.top,endPoint:.bottom),lineWidth:1))
-                .shadow(color:.black.opacity(0.3),radius:18,y:8)
-                .padding(.horizontal,24).padding(.bottom,3)
-            }
-            .navigationDestination(item:$selected) { ChatView(chat:$0) }
-            .sheet(isPresented:$findPeople) { PeopleView { chat in findPeople=false; selected=chat } }
-            .sheet(isPresented:$group) { GroupView { chat in group=false; selected=chat } }
-            .sheet(isPresented:$settings) { SettingsView() }
-            .sheet(isPresented:$calls){IncomingCallsView()}
-            .refreshable { await store.reloadChats() }
-            .task { await store.reloadChats() }
-            .onChange(of:store.eventVersion) { _,_ in Task { await store.reloadChats() } }
-        }
-    }
-}
-
 struct PeopleView: View {
     @EnvironmentObject var store: ChatStore
     @Environment(\.dismiss) var dismiss
@@ -742,6 +635,12 @@ struct VideoCircleRecorder:UIViewControllerRepresentable {
 struct ChatView: View {
     @EnvironmentObject var store: ChatStore
     let chat: Conversation
+    @Environment(\.dismiss) private var dismiss
+    @State private var showProfile=false
+    @State private var memberCount:Int?
+    @State private var pinnedMessage:ChatMessage?
+    @State private var emojiPicker=false
+    @AppStorage("savedMessages") private var savedMessages=""
     @State private var messages: [ChatMessage] = []
     @State private var draft = ""
     @State private var reply: ChatMessage?
@@ -771,20 +670,31 @@ struct ChatView: View {
     @State private var callURL:URL?
     var body: some View {
         VStack(spacing:0) {
+            ReferenceChatHeader(chat:chat,subtitle:chat.kind=="group" ? (memberCount.map{"\($0) участников"} ?? "Группа") : "@\(chat.other_user?.username ?? "")"){showProfile=true}
+            if let pinnedMessage {
+                HStack(spacing:9){RoundedRectangle(cornerRadius:2).fill(referenceGray).frame(width:3)
+                    VStack(alignment:.leading,spacing:1){Text("Закреплённое сообщение").font(.system(size:15,weight:.medium));Text(pinnedMessage.body.isEmpty ? "Вложение":pinnedMessage.body).font(.system(size:15)).lineLimit(1)}
+                    Spacer();Button {self.pinnedMessage=nil;UserDefaults.standard.removeObject(forKey:"pinned-\(store.me?.id ?? 0)-\(chat.id)")} label:{Image(systemName:"pin.slash").font(.system(size:20))}
+                }.padding(.horizontal,14).padding(.vertical,7).frame(height:49).modifier(ReferenceGlass()).padding(.horizontal,16).padding(.bottom,5)
+            }
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing:11) {
+                    LazyVStack(spacing:5) {
                         if older && !messages.isEmpty {
                             Button("Загрузить ранние") { Task { await loadOlder() } }
                                 .font(.caption).foregroundStyle(muted).padding(10)
                         }
                         ForEach(messages) { message in
-                            HStack {
+                            HStack(alignment:.bottom,spacing:7) {
+                                if chat.kind=="group" && message.sender_id != store.me?.id {
+                                    ReferenceAvatar(person:Person(id:message.sender_id,username:"",display_name:message.sender_name,has_avatar:true),title:message.sender_name,size:34)
+                                }
                                 if message.sender_id == store.me?.id { Spacer(minLength:45) }
                                 VStack(alignment:message.sender_id == store.me?.id ? .trailing : .leading,spacing:4) {
                                     if chat.kind == "group" && message.sender_id != store.me?.id {
-                                        Text(message.sender_name).font(.caption.bold()).foregroundStyle(muted)
+                                        Text(message.sender_name).font(.system(size:13,weight:.semibold)).foregroundStyle(referenceBlue)
                                     }
+                                    if let replyID=message.reply_to {ReferenceReply(message:messages.first{$0.id==replyID})}
                                     if message.deleted == 0,let file=message.attachment, file.filename.hasPrefix("video_circle.") {
                                         VideoCircleBubble(file:file)
                                     } else if message.deleted == 0,let file=message.attachment {
@@ -833,7 +743,7 @@ struct ChatView: View {
                                     if message.deleted != 0 || !message.body.isEmpty {
                                         Text(message.deleted != 0 ? "Сообщение удалено" : message.body)
                                         .foregroundStyle(message.deleted != 0 ? muted : white)
-                                        .font(.body)
+                                        .font(.system(size:17))
                                     }
                                     HStack(spacing:6) {
                                         if message.edited_at != nil { Text("изм.") }
@@ -847,10 +757,13 @@ struct ChatView: View {
                                     }
                                 }
                                 .padding(message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true ? 0 : 11)
-                                .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) ? Color.clear : (message.sender_id == store.me?.id ? glassBlue.opacity(0.25) : white.opacity(0.10)),in:RoundedRectangle(cornerRadius:20))
+                                .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) ? Color.clear : (message.sender_id == store.me?.id ? Color(red:0.25,green:0.22,blue:0.34) : Color(red:0.17,green:0.14,blue:0.21)),in:RoundedRectangle(cornerRadius:20))
                                 .contextMenu {
                                     if message.deleted == 0 {
                                         Button("Ответить",systemImage:"arrowshape.turn.up.left") { reply=message }
+                                        Button("Закрепить",systemImage:"pin") {pinnedMessage=message;UserDefaults.standard.set(message.id,forKey:"pinned-\(store.me?.id ?? 0)-\(chat.id)")}
+                                        Button("В избранное",systemImage:"bookmark") {let key="\(store.me?.id ?? 0):\(message.id)";var ids=Set(savedMessages.split(separator:",").map(String.init));ids.insert(key);savedMessages=ids.sorted().joined(separator:",")}
+
                                         Button("🤍") { Task { await store.react(message.id,emoji:"🤍") } }
                                         Button("👍") { Task { await store.react(message.id,emoji:"👍") } }
                                         if message.sender_id == store.me?.id {
@@ -862,7 +775,7 @@ struct ChatView: View {
                                 if message.sender_id != store.me?.id { Spacer(minLength:45) }
                             }.id(message.id)
                         }
-                    }.padding(.horizontal,14).padding(.top,12).padding(.bottom,100)
+                    }.padding(.horizontal,8).padding(.top,6).padding(.bottom,90)
                 }
                 .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
@@ -884,26 +797,27 @@ struct ChatView: View {
                 HStack(spacing:8) { ProgressView().tint(.white); Text("Загрузка медиа…").font(.caption) }
                     .padding(.horizontal,16).padding(.top,6)
             }
-            HStack(alignment:.bottom,spacing:10) {
+            if emojiPicker {HStack{ForEach(["😀","❤️","👍","🔥","😂","🎉","🤍"],id:\.self){emoji in Button(emoji){draft += emoji}.font(.system(size:25))}}.padding(10).modifier(ReferenceGlass()).padding(.horizontal,16)}
+            HStack(alignment:.bottom,spacing:7) {
                 Menu {
                     Button("Фото",systemImage:"photo") { showingPhotoPicker=true }
                     Button("Файл",systemImage:"paperclip") { showingFilePicker=true }
                 } label: {
                     Image(systemName:"paperclip").font(.title2)
-                        .frame(width:38,height:42)
+                        .frame(width:40,height:40).modifier(ReferenceGlass(radius:22))
                 }.disabled(uploading)
-                TextField("Сообщение",text:$draft,axis:.vertical)
-                    .focused($composerFocused)
-                    .lineLimit(1...5).padding(12)
-                    .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:18))
+                HStack(spacing:4){
+                    TextField("Сообщение",text:$draft,axis:.vertical).focused($composerFocused).lineLimit(1...5).font(.system(size:17)).padding(.leading,12).padding(.vertical,9)
+                    Button {emojiPicker.toggle()} label:{Image(systemName:"face.smiling").font(.system(size:22)).foregroundStyle(referenceGray)}.padding(.trailing,10)
+                }.modifier(ReferenceGlass(radius:25))
                 if !draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
                     Button { Task { await submit() } } label: {
                         Image(systemName:"arrow.up").font(.headline)
                             .foregroundStyle(.black).frame(width:42,height:42).background(.white,in:Circle())
                     }
                 } else {
-                    Image(systemName:voiceRecorder.isRecording ? "stop.circle.fill" : (recordingModeVideo ? "video.circle.fill" : "mic.fill"))
-                        .font(.title2).frame(width:42,height:42)
+                    Image(systemName:voiceRecorder.isRecording ? "stop.circle.fill" : (recordingModeVideo ? "video" : "mic"))
+                        .font(.system(size:25,weight:.regular)).frame(width:40,height:40).modifier(ReferenceGlass(radius:22))
                         .contentShape(Circle())
                         .gesture(DragGesture(minimumDistance:0)
                             .onChanged { _ in
@@ -951,27 +865,15 @@ struct ChatView: View {
                     .allowsHitTesting(!uploading)
                 }
             }
-            .padding(.horizontal,12).padding(.vertical,9)
+            .padding(.horizontal,16).padding(.vertical,5)
 
-            .padding(.horizontal,8).padding(.bottom,5)
+            .padding(.bottom,5)
         }
-        .background(NightwellBackground())
-        .navigationTitle(chat.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement:.topBarTrailing){
-                if let person=chat.other_user {
-                    Button {
-                        Task {
-                            if let call=await store.makeCall(to:person.id),
-                               let url=store.voiceURL(call){
-                                callURL=url;showingCall=true
-                            }
-                        }
-                    } label:{Image(systemName:"phone")}
-                }
-            }
-        }
+        .background(ChatWallpaper())
+        .toolbar(.hidden,for:.navigationBar)
+        .navigationBarBackButtonHidden(true)
+        .foregroundStyle(.white)
+        .sheet(isPresented:$showProfile){ReferenceGroupProfile(chat:chat){dismiss()}}
         .sheet(isPresented:$showingCall){if let callURL {SafariCallView(url:callURL)}}
         .overlay { if showingVideoRecorder {
             VideoCircleRecorder(onVideo: { url in
@@ -1023,7 +925,7 @@ struct ChatView: View {
             if activeID == nil { audioPlayer?.pause() }
         }
         .quickLookPreview($preview)
-        .task { await reload() }
+        .task { await reload();if let details:ChatDetails=try? await store.request("/chats/\(chat.id)/details"){memberCount=details.members.count} }
         .onChange(of:store.eventVersion) { _,_ in Task { await reload() } }
         .alert("Изменить сообщение",isPresented:Binding(get:{editing != nil},set:{if !$0 { editing=nil }})) {
             TextField("Сообщение",text:$editText)
@@ -1034,6 +936,8 @@ struct ChatView: View {
     private func reload() async {
         let data=await store.messages(chat.id)
         messages=data
+        let pinnedID=UserDefaults.standard.integer(forKey:"pinned-\(store.me?.id ?? 0)-\(chat.id)")
+        if let found=data.first(where:{$0.id==pinnedID}){pinnedMessage=found}
         if let last=data.last { await store.markRead(chatID:chat.id,messageID:last.id) }
     }
     private func loadOlder() async {

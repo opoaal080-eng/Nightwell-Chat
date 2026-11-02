@@ -61,7 +61,8 @@ public final class MainActivity extends Activity {
     final Runnable refresh=new Runnable(){ @Override public void run(){
         if("chat".equals(screen)){loadMessages(false);checkIncoming();}
         else if("inbox".equals(screen)){loadChats();checkIncoming();}
-        if("chat".equals(screen)||"inbox".equals(screen))handler.postDelayed(this,6500);
+        else if("calls".equals(screen)){checkIncoming();}
+        if("chat".equals(screen)||"inbox".equals(screen)||"calls".equals(screen))handler.postDelayed(this,6500);
     }};
     interface Job {byte[] call() throws Exception;}
     interface Done {void accept(byte[] data) throws Exception;}
@@ -656,7 +657,7 @@ public final class MainActivity extends Activity {
     void profile(){enter("profile");heading("Профиль");btn("← К чатам",this::inbox);
         if(myself==null)return;
         hint("@"+myself.optString("username"));
-        hint("Nightwell Chat 0.11.5");
+        hint("Nightwell Chat 0.11.6");
         ImageView avatar=new ImageView(this);avatar.setAdjustViewBounds(true);avatar.setMaxHeight(dp(160));
         avatar.setImageResource(android.R.drawable.sym_def_app_icon);
         page.addView(avatar,new LinearLayout.LayoutParams(dp(120),dp(120)));

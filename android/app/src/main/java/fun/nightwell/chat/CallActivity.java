@@ -3,6 +3,9 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.content.Context;
 import android.webkit.*;
 import android.widget.*;
 import android.view.View;
@@ -10,6 +13,9 @@ import java.util.ArrayList;
 public final class CallActivity extends Activity {
     private WebView web;
     private PermissionRequest waiting;
+    private ConnectivityManager connectivity;
+    private ConnectivityManager.NetworkCallback networkCallback;
+    private boolean networkLost=false;
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         getWindow().setStatusBarColor(0xff080808);
@@ -61,6 +67,29 @@ public final class CallActivity extends Activity {
                 }
             }
         });
+        connectivity=(ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
+        if(android.os.Build.VERSION.SDK_INT>=24 && connectivity!=null){
+            networkCallback=new ConnectivityManager.NetworkCallback(){
+                @Override public void onLost(Network network){
+                    runOnUiThread(()->{
+                        if(ending||isFinishing())return;
+                        networkLost=true;
+                        Toast.makeText(CallActivity.this,"Сеть потеряна. Ожидаем подключение.",Toast.LENGTH_SHORT).show();
+                    });
+                }
+                @Override public void onAvailable(Network network){
+                    runOnUiThread(()->{
+                        if(!networkLost||ending||isFinishing())return;
+                        networkLost=false;
+                        Toast.makeText(CallActivity.this,"Сеть восстановлена. Проверяем звонок.",Toast.LENGTH_SHORT).show();
+                        if(web!=null)web.evaluateJavascript(
+                            "if(typeof pc!=='undefined' && pc && pc.connectionState==='failed' && typeof restartIce==='function')restartIce();",
+                            ignored->{});
+                    });
+                }
+            };
+            connectivity.registerDefaultNetworkCallback(networkCallback);
+        }
         String u=getIntent().getStringExtra("url");
         if(u!=null && u.startsWith("https://chat.nightwell.fun/calls/"))web.loadUrl(u);else finish();
     }
@@ -91,5 +120,5 @@ public final class CallActivity extends Activity {
         }else finish();
     }
     @Override public void onBackPressed(){endCall();}
-    @Override public void onDestroy(){if(waiting!=null)waiting.deny();if(web!=null){web.loadUrl("about:blank");web.destroy();}super.onDestroy();}
+    @Override public void onDestroy(){if(connectivity!=null&&networkCallback!=null)connectivity.unregisterNetworkCallback(networkCallback);if(waiting!=null)waiting.deny();if(web!=null){web.loadUrl("about:blank");web.destroy();}super.onDestroy();}
 }

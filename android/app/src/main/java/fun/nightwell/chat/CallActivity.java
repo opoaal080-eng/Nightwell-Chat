@@ -44,6 +44,17 @@ public final class CallActivity extends Activity {
         web.getSettings().setAllowFileAccess(false);
         web.getSettings().setAllowContentAccess(false);
         web.getSettings().setMediaPlaybackRequiresUserGesture(false);
+        web.setWebViewClient(new WebViewClient(){
+            @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){
+                String url=request.getUrl().toString();
+                return !url.startsWith("https://chat.nightwell.fun/calls/");
+            }
+            @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error){
+                if(request.isForMainFrame()&&!isFinishing()){
+                    Toast.makeText(CallActivity.this,"Соединение потеряно. Проверь интернет.",Toast.LENGTH_LONG).show();
+                }
+            }
+        });
         String u=getIntent().getStringExtra("url");
         if(u!=null && u.startsWith("https://chat.nightwell.fun/calls/"))web.loadUrl(u);else finish();
     }

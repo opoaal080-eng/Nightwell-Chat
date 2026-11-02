@@ -244,6 +244,7 @@ public final class MainActivity extends Activity {
         btn("← Назад к переписке",this::chat);
         heading(chatTitle);
         hint("Профиль собеседника");
+        if(otherId>0)hint("ID пользователя: "+otherId);
         if(otherId>0) {
             btn("Позвонить",()->{chat();startCall();});
         }

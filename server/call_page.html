@@ -4,11 +4,25 @@
 'use strict';
 const cid='__CALL_ID__';const fragment=new URLSearchParams(location.hash.substring(1));const ticket=fragment.get('ticket')||'';
 const status=document.getElementById('state'),start=document.getElementById('start'),hang=document.getElementById('hang'),audio=document.getElementById('remote');
-let ws,peer,stream,role,ready=false,offered=false,finished=false;
+let ws,peer,stream,role,ready=false,offered=false,finished=false,restarting=false;
 function text(msg){status.textContent=msg}
 function send(kind,data){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:kind,data:data||null}))}
 function closeCall(){finished=true;send('hangup');if(stream)stream.getTracks().forEach(t=>t.stop());if(peer)peer.close();if(ws)ws.close();start.disabled=true;text('Звонок завершён')}
 hang.onclick=closeCall;
+async function restartIce(){
+ if(finished||!peer||!ready||restarting)return;
+ if(peer.signalingState!=='stable')return;
+ if(role!=='caller'){text('Ожидаем восстановления связи…');return}
+ restarting=true;
+ try{
+  text('Восстанавливаем соединение…');
+  const offer=await peer.createOffer({iceRestart:true});
+  await peer.setLocalDescription(offer);
+  send('offer',peer.localDescription);
+ }catch(err){text('Не удалось восстановить звонок: '+err.message)}
+ finally{restarting=false}
+}
+window.restartIce=restartIce;
 async function connect(){
  if(!ticket){text('Нет разрешения на звонок');start.disabled=true;return}
  ws=new WebSocket(location.origin.replace(/^http/,'ws')+'/calls/'+cid+'/signal?ticket='+encodeURIComponent(ticket));
@@ -33,7 +47,11 @@ async function ensurePeer(){
  peer=new RTCPeerConnection(cfg);
  peer.onicecandidate=e=>{if(e.candidate)send('ice',e.candidate.toJSON())};
  peer.ontrack=e=>{audio.srcObject=e.streams[0];audio.play().catch(()=>text('Нажми экран, чтобы включить звук'))};
- peer.onconnectionstatechange=()=>{if(peer.connectionState==='connected')text('Разговор');if(peer.connectionState==='failed')text('Не удалось установить соединение. Нужен TURN-сервер')};
+ peer.onconnectionstatechange=()=>{
+  if(peer.connectionState==='connected')text('Разговор');
+  if(peer.connectionState==='disconnected')text('Связь прервана, ждём восстановления…');
+  if(peer.connectionState==='failed'){text('Пробуем восстановить звонок…');restartIce()}
+};
  if(stream)stream.getTracks().forEach(track=>peer.addTrack(track,stream));
 }
 async function negotiate(){if(finished||!stream||!ready)return;await ensurePeer();if(role==='caller'&&!offered){offered=true;const offer=await peer.createOffer();await peer.setLocalDescription(offer);send('offer',peer.localDescription)}else{text('Устанавливаем соединение…')}}

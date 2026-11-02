@@ -16,16 +16,16 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fun.nightwell.chat
-        MARKETING_VERSION: '0.11.5'
-        CURRENT_PROJECT_VERSION: '16'
+        MARKETING_VERSION: '0.11.6'
+        CURRENT_PROJECT_VERSION: '17'
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: NightwellChat/Info.plist
       properties:
         CFBundleDisplayName: Nightwell Chat
-        CFBundleShortVersionString: '0.11.5'
-        CFBundleVersion: '16'
+        CFBundleShortVersionString: '0.11.6'
+        CFBundleVersion: '17'
         UILaunchScreen: {}
         NSContactsUsageDescription: "Доступ нужен для показа адресной книги на устройстве и поиска выбранного номера в Nightwell Chat."
         NSMicrophoneUsageDescription: "Микрофон используется для звонков и записи голосовых сообщений Nightwell Chat."

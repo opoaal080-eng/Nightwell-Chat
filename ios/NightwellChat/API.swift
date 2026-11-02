@@ -111,6 +111,9 @@ enum NetworkError: LocalizedError {
     @Published var alertText = ""
     @Published var loading = false
     @Published var phoneStatus: PhoneStatus?
+    @Published var incomingCall: VoiceCall?
+    @Published var endedCallID: String?
+    private var checkingIncoming = false
     @Published var serverURL = UserDefaults.standard.string(forKey: "nightwell.server") ?? "https://chat.nightwell.fun"
     private var socket: URLSessionWebSocketTask?
     private var socketJob: Task<Void, Never>?
@@ -275,6 +278,13 @@ enum NetworkError: LocalizedError {
         do { return try await request("/calls/direct/\(other)",method:"POST") }
         catch { alertText=error.localizedDescription;return nil }
     }
+    func refreshIncomingCalls() async {
+        guard !token.isEmpty, !checkingIncoming, incomingCall == nil else { return }
+        checkingIncoming = true
+        defer { checkingIncoming = false }
+        let pending = await pendingCalls()
+        if incomingCall == nil { incomingCall = pending.first }
+    }
     func pendingCalls() async -> [VoiceCall] {
         do { return try await request("/calls/pending") }
         catch { return [] }
@@ -303,6 +313,8 @@ enum NetworkError: LocalizedError {
         token = ""
         SecureToken.save("")
         chats = []
+        incomingCall = nil
+        endedCallID = nil
         me = nil
     }
 
@@ -380,7 +392,15 @@ enum NetworkError: LocalizedError {
                     ws.resume()
                     while !Task.isCancelled {
                         let response = try await ws.receive()
-                        if case .string(let message) = response, message.contains("\"type\"") {
+                        if case .string(let message) = response,
+                           let data = message.data(using:.utf8),
+                           let event = try? JSONSerialization.jsonObject(with:data) as? [String:Any],
+                           let kind = event["type"] as? String {
+                            if kind == "incoming_call" { await self.refreshIncomingCalls() }
+                            if kind == "call_ended", let cid = event["call_id"] as? String {
+                                self.endedCallID = cid
+                                if self.incomingCall?.id == cid { self.incomingCall = nil }
+                            }
                             self.eventVersion += 1
                         }
                     }

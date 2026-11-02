@@ -33,6 +33,7 @@ extension View { func glass() -> some View { modifier(GlassPanel()) } }
 
 struct RootView: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         Group {
             if store.token.isEmpty { LoginView() }
@@ -40,6 +41,14 @@ struct RootView: View {
         }
         .tint(.white)
         .background(NightwellBackground())
+        .fullScreenCover(item:$store.incomingCall) { call in IncomingCallOverlay(call:call) }
+        .task(id:scenePhase == .active && !store.token.isEmpty) {
+            guard scenePhase == .active && !store.token.isEmpty else { return }
+            while !Task.isCancelled {
+                await store.refreshIncomingCalls()
+                try? await Task.sleep(for:.seconds(4))
+            }
+        }
         .alert("Nightwell Chat",isPresented:Binding(get:{ !store.alertText.isEmpty },set:{ if !$0 { store.alertText = "" } })) {
             Button("ОК",role:.cancel) { store.alertText = "" }
         } message: { Text(store.alertText) }

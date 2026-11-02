@@ -35,7 +35,7 @@ struct ReferenceAvatar:View {
             else {Text(title.split(separator:" ").prefix(2).compactMap{$0.first}.map(String.init).joined()).font(.system(size:size*0.37,weight:.medium)).foregroundStyle(.white)}
         }.frame(width:size,height:size).clipShape(Circle())
         .task(id:"\(person?.id ?? 0)-\(store.eventVersion)") {
-            guard let person,person.has_avatar == true else{return}
+            guard let person,person.has_avatar == true else{image=nil;return}
             if let bytes=await store.loadAvatar(person.id) {image=UIImage(data:bytes)}
         }
     }
@@ -56,7 +56,7 @@ struct ReferenceTabBar:View {
     private let icons=["person.crop.circle.fill","phone.fill","bubble.left.and.bubble.right.fill","gearshape"]
     var body:some View {
         HStack(spacing:0){ForEach(0..<4){i in
-            Button {selection=i} label:{VStack(spacing:4){Image(systemName:icons[i]).font(.system(size:26,weight:.regular));Text(titles[i]).font(.system(size:11,weight:.semibold))}
+            Button {UISelectionFeedbackGenerator().selectionChanged();withAnimation(.spring(response:0.3,dampingFraction:0.8)){selection=i}} label:{VStack(spacing:4){Image(systemName:icons[i]).font(.system(size:26,weight:.regular));Text(titles[i]).font(.system(size:11,weight:.semibold))}
                 .foregroundStyle(selection==i ? referenceBlue:.white).frame(maxWidth:.infinity).frame(height:58)
                 .background(selection==i ? Color.white.opacity(0.13):.clear,in:Capsule())}
                 .accessibilityIdentifier("tab_\(i)")
@@ -111,7 +111,7 @@ struct InboxView:View {
                 ReferenceIcon(symbol:"square.and.pencil",blue:true){people=true}
             }.foregroundStyle(.white).padding(.horizontal,16).padding(.top,8).padding(.bottom,10)
             ReferenceSegments(titles:["Все","Personal"],selected:$filter).padding(.horizontal,16).padding(.bottom,5)
-            if editing {HStack {Image(systemName:"magnifyingglass");TextField("Поиск",text:$query)}.padding(10).background(Color(white:0.10),in:Capsule()).padding(.horizontal,16)}
+            HStack {Image(systemName:"magnifyingglass");TextField("Поиск чатов",text:$query).textInputAutocapitalization(.never);if !query.isEmpty {Button {query=""} label:{Image(systemName:"xmark.circle.fill")}}}.foregroundStyle(referenceGray).padding(10).background(Color(white:0.10),in:Capsule()).padding(.horizontal,16).padding(.vertical,5)
             ScrollView {
                 LazyVStack(spacing:0){
                     ForEach(filtered){chat in
@@ -122,7 +122,7 @@ struct InboxView:View {
                         .background(isPinned(chat.id) ? Color(white:0.115):.black)
                         .contextMenu {Button(isPinned(chat.id) ? "Открепить":"Закрепить",systemImage:"pin"){togglePin(chat.id)}}
                     }
-                    if filtered.isEmpty {Text("Пока нет чатов").foregroundStyle(referenceGray).padding(.top,80)}
+                    if filtered.isEmpty {Text(query.isEmpty ? "Пока нет чатов":"Ничего не найдено").foregroundStyle(referenceGray).padding(.top,80)}
                 }.padding(.bottom,90)
             }.refreshable{await store.reloadChats()}
         }

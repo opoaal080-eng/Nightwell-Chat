@@ -643,6 +643,15 @@ struct ChatView: View {
     @AppStorage("savedMessages") private var savedMessages=""
     @State private var messages: [ChatMessage] = []
     @State private var draft = ""
+    @State private var draftLoaded=false
+    @State private var sending=false
+    @State private var reloading=false
+    @State private var reloadAgain=false
+    @State private var loadingOlder=false
+    @State private var nearLatest=true
+    @State private var newMessages=false
+    @State private var heartMessage:Int?
+    private var draftKey:String {"draft-\(store.serverURL)-\(store.me?.id ?? 0)-\(chat.id)"}
     @State private var reply: ChatMessage?
     @State private var editing: ChatMessage?
     @State private var editText = ""
@@ -681,7 +690,7 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing:5) {
                         if older && !messages.isEmpty {
-                            Button("Загрузить ранние") { Task { await loadOlder() } }
+                            Button(loadingOlder ? "Загружаю…":"Загрузить ранние") { Task { await loadOlder() } }.disabled(loadingOlder)
                                 .font(.caption).foregroundStyle(muted).padding(10)
                         }
                         ForEach(messages) { message in
@@ -758,6 +767,8 @@ struct ChatView: View {
                                 }
                                 .padding(message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true ? 0 : 11)
                                 .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) ? Color.clear : (message.sender_id == store.me?.id ? Color(red:0.25,green:0.22,blue:0.34) : Color(red:0.17,green:0.14,blue:0.21)),in:RoundedRectangle(cornerRadius:20))
+                                .overlay {if heartMessage==message.id {Image(systemName:"heart.fill").font(.system(size:42)).foregroundStyle(.pink).shadow(color:.pink.opacity(0.4),radius:12).transition(.scale.combined(with:.opacity)).allowsHitTesting(false)}}
+                                .onTapGesture(count:2){guard message.deleted==0 else{return};Task{await quickHeart(message.id)}}
                                 .contextMenu {
                                     if message.deleted == 0 {
                                         Button("Ответить",systemImage:"arrowshape.turn.up.left") { reply=message }
@@ -775,17 +786,19 @@ struct ChatView: View {
                                 if message.sender_id != store.me?.id { Spacer(minLength:45) }
                             }.id(message.id)
                         }
-                    }.padding(.horizontal,8).padding(.top,6).padding(.bottom,90)
+                        Color.clear.frame(height:1).id("latest").onAppear{nearLatest=true;newMessages=false}.onDisappear{nearLatest=false}
+                    }.padding(.horizontal,8).padding(.top,6).padding(.bottom,8)
                 }
                 .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
                 .onTapGesture { composerFocused=false }
                 .onChange(of:messages.last?.id) { _,_ in
-                    if let id=messages.last?.id { withAnimation(.easeOut(duration:0.2)) { proxy.scrollTo(id,anchor:.bottom) } }
+                    if nearLatest || messages.last?.sender_id==store.me?.id {
+                        withAnimation(.easeOut(duration:0.2)){proxy.scrollTo("latest",anchor:.bottom)}
+                    } else {newMessages=true}
                 }
+                .overlay(alignment:.bottomTrailing){if newMessages {Button {withAnimation{proxy.scrollTo("latest",anchor:.bottom)};newMessages=false} label:{Label("Новые",systemImage:"arrow.down").font(.system(size:13,weight:.semibold)).padding(12).background(referenceBlue,in:Capsule())}.padding(12)}}
             }
-            .padding(.bottom,-74)
-            // Messages continue underneath the floating transparent composer.
             if let reply {
                 HStack {
                     VStack(alignment:.leading) { Text("Ответ \(reply.sender_name)").font(.caption.bold()); Text(reply.body).lineLimit(1).font(.caption).foregroundStyle(muted) }
@@ -807,14 +820,14 @@ struct ChatView: View {
                         .frame(width:40,height:40).modifier(ReferenceGlass(radius:22))
                 }.disabled(uploading)
                 HStack(spacing:4){
-                    TextField("Сообщение",text:$draft,axis:.vertical).focused($composerFocused).lineLimit(1...5).font(.system(size:17)).padding(.leading,12).padding(.vertical,9)
+                    TextField("Сообщение",text:$draft,axis:.vertical).focused($composerFocused).disabled(sending).lineLimit(1...5).font(.system(size:17)).padding(.leading,12).padding(.vertical,9)
                     Button {emojiPicker.toggle()} label:{Image(systemName:"face.smiling").font(.system(size:22)).foregroundStyle(referenceGray)}.padding(.trailing,10)
                 }.modifier(ReferenceGlass(radius:25))
                 if !draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
                     Button { Task { await submit() } } label: {
-                        Image(systemName:"arrow.up").font(.headline)
-                            .foregroundStyle(.black).frame(width:42,height:42).background(.white,in:Circle())
-                    }
+                        Image(systemName:sending ? "ellipsis":"arrow.up").font(.headline)
+                            .foregroundStyle(.white).frame(width:42,height:42).background(LinearGradient(colors:[referenceBlue,.indigo],startPoint:.topLeading,endPoint:.bottomTrailing),in:Circle())
+                    }.disabled(sending).accessibilityLabel(sending ? "Отправка":"Отправить сообщение")
                 } else {
                     Image(systemName:voiceRecorder.isRecording ? "stop.circle.fill" : (recordingModeVideo ? "video" : "mic"))
                         .font(.system(size:25,weight:.regular)).frame(width:40,height:40).modifier(ReferenceGlass(radius:22))
@@ -925,7 +938,8 @@ struct ChatView: View {
             if activeID == nil { audioPlayer?.pause() }
         }
         .quickLookPreview($preview)
-        .task { await reload();if let details:ChatDetails=try? await store.request("/chats/\(chat.id)/details"){memberCount=details.members.count} }
+        .onChange(of:draft){_,value in if draftLoaded {if value.isEmpty{UserDefaults.standard.removeObject(forKey:draftKey)}else{UserDefaults.standard.set(value,forKey:draftKey)}}}
+        .task { if !draftLoaded {draft=UserDefaults.standard.string(forKey:draftKey) ?? "";draftLoaded=true};await reload();if let details:ChatDetails=try? await store.request("/chats/\(chat.id)/details"){memberCount=details.members.count} }
         .onChange(of:store.eventVersion) { _,_ in Task { await reload() } }
         .alert("Изменить сообщение",isPresented:Binding(get:{editing != nil},set:{if !$0 { editing=nil }})) {
             TextField("Сообщение",text:$editText)
@@ -934,28 +948,56 @@ struct ChatView: View {
         }
     }
     private func reload() async {
-        let data=await store.messages(chat.id)
-        messages=data
-        let pinnedID=UserDefaults.standard.integer(forKey:"pinned-\(store.me?.id ?? 0)-\(chat.id)")
-        if let found=data.first(where:{$0.id==pinnedID}){pinnedMessage=found}
-        if let last=data.last { await store.markRead(chatID:chat.id,messageID:last.id) }
+        guard !reloading else {reloadAgain=true;return}
+        reloading=true
+        defer {reloading=false}
+        repeat {
+            reloadAgain=false
+            do {
+                let data:[ChatMessage]=try await store.request("/chats/\(chat.id)/messages")
+                let firstLoad=messages.isEmpty
+                var merged=Dictionary(uniqueKeysWithValues:messages.map{($0.id,$0)})
+                for message in data {merged[message.id]=message}
+                messages=merged.values.sorted{$0.id<$1.id}
+                if firstLoad {older=data.count>=50}
+                let pinnedID=UserDefaults.standard.integer(forKey:"pinned-\(store.me?.id ?? 0)-\(chat.id)")
+                pinnedMessage=messages.first{$0.id==pinnedID && $0.deleted==0}
+                if let last=data.last {await store.markRead(chatID:chat.id,messageID:last.id)}
+            } catch {store.alertText=error.localizedDescription}
+        } while reloadAgain && !Task.isCancelled
     }
     private func loadOlder() async {
-        guard let first=messages.first else { return }
-        let earlier=await store.messages(chat.id,before:first.id)
-        older = earlier.count >= 50
-        messages=earlier+messages
+        guard !loadingOlder,let first=messages.first else {return}
+        loadingOlder=true;defer{loadingOlder=false}
+        do {
+            let earlier:[ChatMessage]=try await store.request("/chats/\(chat.id)/messages?before=\(first.id)")
+            older=earlier.count>=50
+            var merged=Dictionary(uniqueKeysWithValues:messages.map{($0.id,$0)})
+            for message in earlier {merged[message.id]=message}
+            messages=merged.values.sorted{$0.id<$1.id}
+        }catch{store.alertText=error.localizedDescription}
+    }
+    private func quickHeart(_ id:Int) async {
+        guard heartMessage==nil else{return}
+        UIImpactFeedbackGenerator(style:.soft).impactOccurred()
+        withAnimation(.spring(response:0.25,dampingFraction:0.55)){heartMessage=id}
+        await store.react(id,emoji:"❤️")
+        await reload()
+        try? await Task.sleep(for:.milliseconds(650))
+        withAnimation(.easeOut(duration:0.2)){heartMessage=nil}
     }
     private func submit() async {
         let text=draft.trimmingCharacters(in:.whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        draft=""
-        let sent=await store.send(chat.id,text:text,reply:reply?.id)
-        if sent == nil { draft=text }
-        reply=nil
+        guard !text.isEmpty,!sending else{return}
+        sending=true;defer{sending=false}
+        guard let sent=await store.send(chat.id,text:text,reply:reply?.id) else{return}
+        draft="";reply=nil
+        UIImpactFeedbackGenerator(style:.light).impactOccurred()
+        if !messages.contains(where:{$0.id==sent.id}) {withAnimation(.easeOut(duration:0.2)){messages.append(sent)}}
         await reload()
         await store.reloadChats()
     }
+
 }
 
 struct SettingsView: View {

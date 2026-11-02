@@ -23,11 +23,12 @@ jobs:
           xcrun simctl bootstatus "$DEVICE" -b
           xcrun simctl status_bar "$DEVICE" override --time '02:15' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 89
           xcrun simctl install "$DEVICE" simbuild/Build/Products/Debug-iphonesimulator/NightwellChat.app
+          sleep 30
           mkdir -p ui-screenshots
           for screen in chats contacts calls chat group; do
             xcrun simctl terminate "$DEVICE" fun.nightwell.chat || true
             xcrun simctl launch "$DEVICE" fun.nightwell.chat --reference-preview "$screen"
-            sleep 4
+            sleep 20
             xcrun simctl io "$DEVICE" screenshot "ui-screenshots/$screen.png"
           done
       - uses: actions/upload-artifact@v4

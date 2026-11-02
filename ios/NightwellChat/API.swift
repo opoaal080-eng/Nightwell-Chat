@@ -115,6 +115,8 @@ enum NetworkError: LocalizedError {
     @Published var serverURL = UserDefaults.standard.string(forKey: "nightwell.server") ?? "https://chat.nightwell.fun"
     private var socket: URLSessionWebSocketTask?
     private var socketJob: Task<Void, Never>?
+    private var avatarCache:[String:(data:Data?,expires:Date)]=[:]
+    private var avatarRequests:[String:Task<Data?,Never>]=[:]
 
     private func url(_ path: String) throws -> URL {
         guard let host = URL(string: serverURL.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -243,11 +245,23 @@ enum NetworkError: LocalizedError {
         #if DEBUG
         if ReferencePreview.enabled {return nil}
         #endif
-        return try? await authorizedData("/users/\(id)/avatar")
+        let session=token
+        let key="\(serverURL)|\(me?.id ?? 0)|\(id)"
+        if let cached=avatarCache[key],cached.expires>Date(){return cached.data}
+        if let pending=avatarRequests[key]{return await pending.value}
+        let pending=Task<Data?,Never>{try? await self.authorizedData("/users/\(id)/avatar")}
+        avatarRequests[key]=pending
+        let bytes=await pending.value
+        guard session==token else{return nil}
+        avatarRequests[key]=nil
+        if avatarCache.count>=80 {avatarCache=avatarCache.filter{$0.value.expires>Date()};if avatarCache.count>=80 {avatarCache.removeAll()}}
+        avatarCache[key]=(bytes,Date().addingTimeInterval(bytes == nil ? 15:60))
+        return bytes
     }
     @discardableResult func updateAvatar(_ bytes:Data) async -> Bool {
         do {
             try await upload(bytes,to:"/me/avatar",filename:"avatar.jpg",mime:"image/jpeg")
+            avatarCache.removeAll()
             let refreshed:Person = try await request("/me")
             guard refreshed.has_avatar == true else {throw NetworkError.server("Сервер не подтвердил сохранение аватарки")}
             guard await loadAvatar(refreshed.id) != nil else {throw NetworkError.server("Аватарка загружена, но сервер не отдаёт её обратно")}
@@ -297,6 +311,8 @@ enum NetworkError: LocalizedError {
     }
 
     func logout() {
+        for task in avatarRequests.values{task.cancel()}
+        avatarRequests.removeAll();avatarCache.removeAll()
         socketJob?.cancel()
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil

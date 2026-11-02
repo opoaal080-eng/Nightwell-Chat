@@ -893,6 +893,14 @@ async def end_call(cid: str,user=Depends(current)):
 def call_page(cid: str):
     if not re.fullmatch(r"[0-9a-f]{32}",cid): raise HTTPException(404,"Not found")
     page = Path(__file__).with_name("call_page.html").read_text(encoding="utf-8")
+    ice_servers = [{"urls": "stun:stun.l.google.com:19302"}]
+    turn_url = os.getenv("NIGHTWELL_TURN_URL", "").strip()
+    turn_user = os.getenv("NIGHTWELL_TURN_USERNAME", "").strip()
+    turn_password = os.getenv("NIGHTWELL_TURN_PASSWORD", "").strip()
+    if turn_url and turn_user and turn_password and turn_url.startswith(("turn:", "turns:")):
+        ice_servers.append({"urls": turn_url, "username": turn_user, "credential": turn_password})
+    ice_json = json.dumps(ice_servers).replace("<", "\\u003c")
+    page = page.replace("<script>", "<script>window.NIGHTWELL_ICE_SERVERS=" + ice_json + ";</script><script>", 1)
     response=HTMLResponse(page.replace("__CALL_ID__",cid), headers={
         "Cache-Control":"no-store", "Referrer-Policy":"no-referrer",
         "Permissions-Policy":"microphone=(self)",

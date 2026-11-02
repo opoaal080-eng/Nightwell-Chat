@@ -2,7 +2,13 @@ name: Export Nightwell Chat Windows Server
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/export-windows-server.yml']
+    paths:
+      - 'server/**'
+      - 'Start_Nightwell_Chat.bat'
+      - 'Stop_Nightwell_Chat.bat'
+      - 'Caddyfile.example'
+      - 'README.md'
+      - '.github/workflows/export-windows-server.yml'
   workflow_dispatch:
 permissions:
   contents: read

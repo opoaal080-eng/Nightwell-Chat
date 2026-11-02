@@ -800,7 +800,7 @@ struct ChatView: View {
                                     }
                                     HStack(spacing:6) {
                                         if message.edited_at != nil { Text("изм.") }
-                                        Text(message.created_at.count >= 16 ? String(message.created_at.suffix(from:message.created_at.index(message.created_at.startIndex,offsetBy:11)).prefix(5)) : "")
+                                        Text(String(message.created_at.dropFirst(11).prefix(5)))
                                     }.font(.system(size:10)).foregroundStyle(muted)
                                     if !message.reactions.isEmpty {
                                         HStack { ForEach(message.reactions) { reaction in

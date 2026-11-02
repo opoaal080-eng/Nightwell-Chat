@@ -7,6 +7,7 @@ struct Person: Codable, Identifiable, Hashable {
     let username: String
     let display_name: String
     let has_avatar: Bool?
+    var online:Bool? = nil
 }
 struct AuthResponse: Decodable {
     let access_token: String
@@ -48,6 +49,7 @@ struct ChatMessage: Decodable, Identifiable {
     let created_at: String
     let edited_at: String?
     let deleted: Int
+    let visual:String?
     let reactions: [Reaction]
     let attachment: ChatAttachment?
 }
@@ -55,7 +57,7 @@ struct EmptyResult: Decodable { let ok: Bool }
 struct ErrorResponse: Decodable { let detail: String? }
 struct LoginPayload: Encodable { let username: String; let password: String }
 struct RegisterPayload: Encodable { let username: String; let password: String; let display_name: String }
-struct MessagePayload: Encodable { let body: String; let reply_to: Int? }
+struct MessagePayload: Encodable { let body: String; let reply_to: Int?; var visual:String = "text" }
 struct GroupPayload: Encodable { let title: String; let user_ids: [Int] }
 struct ReactionPayload: Encodable { let emoji: String }
 struct ReadPayload: Encodable { let message_id: Int }
@@ -114,6 +116,8 @@ enum NetworkError: LocalizedError {
     @Published var serverURL = UserDefaults.standard.string(forKey: "nightwell.server") ?? "https://chat.nightwell.fun"
     private var socket: URLSessionWebSocketTask?
     private var socketJob: Task<Void, Never>?
+    private var avatarCache:[String:(data:Data?,expires:Date)]=[:]
+    private var avatarRequests:[String:Task<Data?,Never>]=[:]
 
     private func url(_ path: String) throws -> URL {
         guard let host = URL(string: serverURL.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -123,6 +127,9 @@ enum NetworkError: LocalizedError {
     }
 
     func request<T: Decodable>(_ path: String, method: String = "GET", body: (any Encodable)? = nil, authenticated: Bool = true) async throws -> T {
+        #if DEBUG
+        if ReferencePreview.enabled {return try JSONDecoder().decode(T.self,from:ReferencePreview.data(path))}
+        #endif
         var req = URLRequest(url: try url(path))
         req.httpMethod = method
         req.timeoutInterval = 20
@@ -208,7 +215,7 @@ enum NetworkError: LocalizedError {
         catch { alertText = error.localizedDescription; return nil }
     }
     func authorizedData(_ path:String) async throws -> Data {
-        var req = URLRequest(url:try url(path))
+        var req = URLRequest(url:try url(path),cachePolicy:.reloadIgnoringLocalCacheData)
         req.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization")
         let (data,response)=try await URLSession.shared.data(for:req)
         guard let res=response as? HTTPURLResponse,(200..<300).contains(res.statusCode) else {
@@ -235,10 +242,27 @@ enum NetworkError: LocalizedError {
         }
         eventVersion += 1
     }
-    func loadAvatar(_ id:Int) async -> Data? { try? await authorizedData("/users/\(id)/avatar") }
+    func loadAvatar(_ id:Int) async -> Data? {
+        #if DEBUG
+        if ReferencePreview.enabled {return nil}
+        #endif
+        let session=token
+        let key="\(serverURL)|\(me?.id ?? 0)|\(id)"
+        if let cached=avatarCache[key],cached.expires>Date(){return cached.data}
+        if let pending=avatarRequests[key]{return await pending.value}
+        let pending=Task<Data?,Never>{try? await self.authorizedData("/users/\(id)/avatar")}
+        avatarRequests[key]=pending
+        let bytes=await pending.value
+        guard session==token else{return nil}
+        avatarRequests[key]=nil
+        if avatarCache.count>=80 {avatarCache=avatarCache.filter{$0.value.expires>Date()};if avatarCache.count>=80 {avatarCache.removeAll()}}
+        avatarCache[key]=(bytes,Date().addingTimeInterval(bytes == nil ? 15:60))
+        return bytes
+    }
     @discardableResult func updateAvatar(_ bytes:Data) async -> Bool {
         do {
             try await upload(bytes,to:"/me/avatar",filename:"avatar.jpg",mime:"image/jpeg")
+            avatarCache.removeAll()
             let refreshed:Person = try await request("/me")
             guard refreshed.has_avatar == true else {throw NetworkError.server("Сервер не подтвердил сохранение аватарки")}
             guard await loadAvatar(refreshed.id) != nil else {throw NetworkError.server("Аватарка загружена, но сервер не отдаёт её обратно")}
@@ -256,7 +280,7 @@ enum NetworkError: LocalizedError {
     func downloadFile(_ file:ChatAttachment) async -> URL? {
         do {
             let data=try await authorizedData("/attachments/\(file.id)")
-            let base=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString,isDirectory:true)
+            let base=FileManager.default.temporaryDirectory.appendingPathComponent("NightwellAttachments",isDirectory:true).appendingPathComponent(UUID().uuidString,isDirectory:true)
             try FileManager.default.createDirectory(at:base,withIntermediateDirectories:true)
             let output=base.appendingPathComponent(URL(fileURLWithPath:file.filename).lastPathComponent)
             try data.write(to:output)
@@ -288,6 +312,8 @@ enum NetworkError: LocalizedError {
     }
 
     func logout() {
+        for task in avatarRequests.values{task.cancel()}
+        avatarRequests.removeAll();avatarCache.removeAll()
         socketJob?.cancel()
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil
@@ -325,8 +351,8 @@ enum NetworkError: LocalizedError {
         do { return try await request("/chats/\(chatID)/messages" + (before.map { "?before=\($0)" } ?? "")) }
         catch { alertText = error.localizedDescription; return [] }
     }
-    func send(_ chatID: Int, text: String, reply: Int? = nil) async -> ChatMessage? {
-        do { return try await request("/chats/\(chatID)/messages",method: "POST",body: MessagePayload(body: text,reply_to: reply)) }
+    func send(_ chatID: Int, text: String, reply: Int? = nil,visual:String="text") async -> ChatMessage? {
+        do { return try await request("/chats/\(chatID)/messages",method: "POST",body: MessagePayload(body: text,reply_to: reply,visual:visual)) }
         catch { alertText = error.localizedDescription; return nil }
     }
     func edit(_ messageID: Int, text: String) async {
@@ -389,3 +415,4 @@ private struct AnyEncodable: Encodable {
     init(_ value: any Encodable) { self.encodeValue = value.encode }
     func encode(to encoder: Encoder) throws { try encodeValue(encoder) }
 }
+

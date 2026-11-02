@@ -10,11 +10,12 @@ private let muted = Color(white: 0.63)
 private let glassBlue = Color(red:0.38,green:0.66,blue:1.0)
 
 struct NightwellBackground: View {
+    @AppStorage("ambientBackground") private var ambient=true
     var body:some View {
         ZStack {
             Color(red:0.025,green:0.035,blue:0.065)
-            RadialGradient(colors:[glassBlue.opacity(0.22),.clear],center:.topTrailing,startRadius:10,endRadius:450)
-            RadialGradient(colors:[Color.purple.opacity(0.12),.clear],center:.bottomLeading,startRadius:30,endRadius:380)
+            if ambient { RadialGradient(colors:[glassBlue.opacity(0.22),.clear],center:.topTrailing,startRadius:10,endRadius:450)
+            RadialGradient(colors:[Color.purple.opacity(0.12),.clear],center:.bottomLeading,startRadius:30,endRadius:380) }
         }.ignoresSafeArea()
     }
 }
@@ -24,6 +25,12 @@ struct GlassPanel: ViewModifier {
         content.padding(14).background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:24))
             .overlay(RoundedRectangle(cornerRadius:24).stroke(LinearGradient(colors:[white.opacity(0.32),white.opacity(0.04)],startPoint:.topLeading,endPoint:.bottomTrailing),lineWidth:1))
             .shadow(color:.black.opacity(0.20),radius:16,y:8)
+    }
+}
+struct FloatingGlass:ViewModifier {
+    @ViewBuilder func body(content:Content)->some View {
+        if #available(iOS 26.0,*) {content.glassEffect(.regular,in:Capsule())}
+        else {content.background(.ultraThinMaterial,in:Capsule())}
     }
 }
 extension View { func glass() -> some View { modifier(GlassPanel()) } }
@@ -160,113 +167,6 @@ struct LegacyLoginView: View {
                 Text("Приватный сервер Nightwell · HTTPS").font(.caption).foregroundStyle(muted)
             }.padding(24)
         }.background(ink)
-    }
-}
-
-struct InboxView: View {
-    @EnvironmentObject var store: ChatStore
-    @State private var findPeople = false
-    @State private var group = false
-    @State private var settings = false
-    @State private var calls = false
-    @State private var selected: Conversation?
-    @State private var chatFilter=0
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                NightwellBackground()
-                if store.chats.isEmpty {
-                    ContentUnavailableView("Пока нет переписок",systemImage:"bubble.left.and.bubble.right",description:Text("Найди пользователя и начни общение"))
-                } else {
-                    List(store.chats.filter {chatFilter == 0 || $0.kind != "group"}) { chat in
-                        Button { selected=chat } label: {
-                            HStack(spacing:13) {
-                                AvatarCircle(person:chat.other_user,fallback:chat.title)
-                                VStack(alignment:.leading,spacing:5) {
-                                    HStack {
-                                        Text(chat.title).font(.headline).foregroundStyle(.white)
-                                        Spacer()
-                                        if chat.unread > 0 { Text("\(chat.unread)").font(.caption.bold()).foregroundStyle(.black)
-                                            .padding(.horizontal,8).padding(.vertical,4).background(.white,in:Capsule()) }
-                                    }
-                                    Text(chat.last_message?.body ?? (chat.kind == "group" ? "Новая группа" : "Новый чат"))
-                                        .font(.subheadline).foregroundStyle(muted).lineLimit(1)
-                                }
-                            }.padding(.vertical,6)
-                        }.listRowBackground(Color.white.opacity(0.045))
-                    }.scrollContentBackground(.hidden)
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden,for:.navigationBar)
-            .safeAreaInset(edge:.top,spacing:0) {
-                VStack(spacing:12) {
-                    HStack(spacing:12) {
-                        Button {settings=true} label:{
-                            Image(systemName:"line.3.horizontal")
-                                .font(.system(size:20,weight:.medium))
-                                .frame(width:44,height:44)
-                                .background(.ultraThinMaterial,in:Circle())
-                        }
-                        Spacer()
-                        Text("Чаты").font(.system(size:22,weight:.semibold,design:.rounded))
-                        Spacer()
-                        Button {group=true} label:{
-                            Image(systemName:"person.2.badge.plus")
-                                .font(.system(size:19)).frame(width:44,height:44)
-                                .background(.ultraThinMaterial,in:Circle())
-                        }
-                        Button {findPeople=true} label:{
-                            Image(systemName:"square.and.pencil")
-                                .font(.system(size:19)).frame(width:44,height:44)
-                                .background(glassBlue.opacity(0.72),in:Circle())
-                        }
-                    }
-                    HStack(spacing:4) {
-                        Button {withAnimation(.easeInOut(duration:0.2)){chatFilter=0}} label:{
-                            Text("Все").frame(maxWidth:.infinity).padding(.vertical,10)
-                                .background(chatFilter == 0 ? .white.opacity(0.19) : .clear,in:Capsule())
-                        }
-                        Button {withAnimation(.easeInOut(duration:0.2)){chatFilter=1}} label:{
-                            Text("Личные").frame(maxWidth:.infinity).padding(.vertical,10)
-                                .background(chatFilter == 1 ? .white.opacity(0.19) : .clear,in:Capsule())
-                        }
-                    }
-                    .font(.system(size:14,weight:.semibold))
-                    .padding(4).background(.ultraThinMaterial,in:Capsule())
-                    .overlay(Capsule().stroke(.white.opacity(0.15)))
-                }
-                .padding(.horizontal,16).padding(.top,10).padding(.bottom,12)
-                .background(.ultraThinMaterial)
-            }
-            .safeAreaInset(edge:.bottom,spacing:0) {
-                HStack(spacing:0) {
-                    Button {findPeople=true} label:{Image(systemName:"person.crop.circle")}
-                    Button {calls=true} label:{Image(systemName:"phone")}
-                    Image(systemName:"bubble.left.and.bubble.right.fill")
-                        .foregroundStyle(glassBlue)
-                        .frame(maxWidth:.infinity)
-                    Button {settings=true} label:{Image(systemName:"gearshape")}
-                }
-                .font(.system(size:23,weight:.regular))
-                .buttonStyle(.plain)
-                .frame(maxWidth:.infinity)
-                .frame(height:54)
-                .padding(.horizontal,12)
-                .background(.ultraThinMaterial,in:Capsule())
-                .overlay(Capsule().stroke(LinearGradient(colors:[.white.opacity(0.35),.white.opacity(0.05)],startPoint:.top,endPoint:.bottom),lineWidth:1))
-                .shadow(color:.black.opacity(0.3),radius:18,y:8)
-                .padding(.horizontal,24).padding(.bottom,3)
-            }
-            .navigationDestination(item:$selected) { ChatView(chat:$0) }
-            .sheet(isPresented:$findPeople) { PeopleView { chat in findPeople=false; selected=chat } }
-            .sheet(isPresented:$group) { GroupView { chat in group=false; selected=chat } }
-            .sheet(isPresented:$settings) { SettingsView() }
-            .sheet(isPresented:$calls){IncomingCallsView()}
-            .refreshable { await store.reloadChats() }
-            .task { await store.reloadChats() }
-            .onChange(of:store.eventVersion) { _,_ in Task { await store.reloadChats() } }
-        }
     }
 }
 
@@ -464,6 +364,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     private var cancelled=false
     var stopWhenReady=false
     private let session=AVCaptureSession()
+    private let sessionQueue=DispatchQueue(label:"Nightwell.circle.capture")
     private let output=AVCaptureMovieFileOutput()
     private let preview=AVCaptureVideoPreviewLayer()
     private let record=UIButton(type:.system)
@@ -507,9 +408,9 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         timer.text="00:00 / 01:00"
         view.addSubview(timer)
         AVCaptureDevice.requestAccess(for:.video){[weak self] granted in
-            guard granted else{return}
-            AVCaptureDevice.requestAccess(for:.audio){_ in
-                DispatchQueue.main.async {self?.configure()}
+            guard granted else{DispatchQueue.main.async {self?.onClose?()};return}
+            AVCaptureDevice.requestAccess(for:.audio){allowed in
+                DispatchQueue.main.async {if allowed {self?.configure()} else {self?.onClose?()}}
             }
         }
     }
@@ -522,12 +423,15 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         preview.masksToBounds=true
         record.frame=CGRect(x:(view.bounds.width-76)/2,y:y+side+42,width:76,height:76)
         record.layer.cornerRadius=38
-        let controlsY=view.bounds.height-view.safeAreaInsets.bottom-145
+        let controlsY=view.bounds.height-view.safeAreaInsets.bottom-110
         flip.frame=CGRect(x:view.bounds.width-88,y:controlsY,width:60,height:54)
         flash.frame=CGRect(x:28,y:controlsY,width:60,height:54)
         timer.frame=CGRect(x:0,y:y-44,width:view.bounds.width,height:30)
     }
-    private func configure(){
+    private func configure(resumeRecording:Bool=false){
+        sessionQueue.async {[weak self] in self?.configureSession(resumeRecording:resumeRecording)}
+    }
+    private func configureSession(resumeRecording:Bool){
         session.beginConfiguration()
         session.sessionPreset = .medium
         for input in session.inputs {session.removeInput(input)}
@@ -541,9 +445,11 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             session.addInput(audio)
         }
         output.maxRecordedDuration=CMTime(seconds:60,preferredTimescale:600)
-        flash.isEnabled=device.hasTorch
-        if !device.hasTorch {torchEnabled=false}
-        updateFlashIcon()
+        DispatchQueue.main.async {
+            self.flash.isEnabled=device.hasTorch
+            if !device.hasTorch {self.torchEnabled=false}
+            self.updateFlashIcon()
+        }
         session.commitConfiguration()
         // Lock capture and preview to portrait independently of device rotation.
         if let connection=output.connection(with:.video),connection.isVideoOrientationSupported {
@@ -552,17 +458,16 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         if let connection=preview.connection,connection.isVideoOrientationSupported {
             connection.videoOrientation = .portrait
         }
-        DispatchQueue.global(qos:.userInitiated).async {[weak self] in
-            guard let self else{return}
-            self.session.startRunning()
-            DispatchQueue.main.async {
-                if self.autoStart && !self.output.isRecording && self.segments.isEmpty {
-                    self.autoStart=false
-                    self.toggleRecording()
-                }
+        session.startRunning()
+        DispatchQueue.main.async {
+            guard !self.cancelled else{return}
+            if (resumeRecording || self.autoStart) && !self.output.isRecording {
+                self.autoStart=false
+                self.toggleRecording()
             }
         }
     }
+
     private func updateFlashIcon(){
         flash.setImage(UIImage(systemName:torchEnabled ? "bolt.fill" : "bolt.slash.fill"),for:.normal)
         flash.tintColor = torchEnabled ? .systemYellow : .white
@@ -582,6 +487,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
     @objc private func switchCamera(){
         torchEnabled=false
         updateFlashIcon()
+        guard !switching && !cancelled else {return}
         if output.isRecording {
             switching=true
             output.stopRecording()
@@ -591,7 +497,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         }
     }
     var isRecordingCircle:Bool {output.isRecording}
-    func finishCircle(){if output.isRecording {output.stopRecording()}}
+    func finishCircle(){stopWhenReady=true;if output.isRecording && !switching {output.stopRecording()}}
     @objc private func toggleRecording(){
         if output.isRecording {output.stopRecording();return}
         let url=FileManager.default.temporaryDirectory.appendingPathComponent("circle_\(UUID().uuidString).mov")
@@ -605,12 +511,13 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
                 self.output.stopRecording()
             }
         }
-        started=Date()
+        if started == nil {started=Date()}
         record.backgroundColor = .systemRed
         ticker?.invalidate()
         ticker=Timer.scheduledTimer(withTimeInterval:0.2,repeats:true){[weak self] _ in
             guard let self,let started=self.started else{return}
             let elapsed=min(60,Int(Date().timeIntervalSince(started)))
+            if elapsed >= 60 {self.finishCircle()}
             self.timer.text=String(format:"%02d:%02d / 01:00",elapsed/60,elapsed%60)
         }
     }
@@ -625,7 +532,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         }
     }
     private func cleanup(){
-        DispatchQueue.global(qos:.userInitiated).async {[weak self] in self?.session.stopRunning()}
+        sessionQueue.async {[weak self] in self?.session.stopRunning()}
     }
     private func finishSegments(){
         let clips=segments
@@ -640,6 +547,7 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             onClose?();return
         }
         let audioTrack=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid)
+        var instructions:[AVMutableVideoCompositionInstruction]=[]
         var cursor=CMTime.zero
         for url in clips {
             let asset=AVURLAsset(url:url)
@@ -647,7 +555,17 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
             let range=CMTimeRange(start:.zero,duration:asset.duration)
             do {
                 try videoTrack.insertTimeRange(range,of:source,at:cursor)
-                if cursor == .zero { videoTrack.preferredTransform = source.preferredTransform }
+                let instruction=AVMutableVideoCompositionInstruction()
+                instruction.timeRange=CMTimeRange(start:cursor,duration:asset.duration)
+                let layer=AVMutableVideoCompositionLayerInstruction(assetTrack:videoTrack)
+                let rect=CGRect(origin:.zero,size:source.naturalSize).applying(source.preferredTransform)
+                let scale=480/max(1,min(abs(rect.width),abs(rect.height)))
+                var transform=source.preferredTransform.concatenating(CGAffineTransform(translationX:-rect.minX,y:-rect.minY))
+                transform=transform.concatenating(CGAffineTransform(scaleX:scale,y:scale))
+                transform=transform.concatenating(CGAffineTransform(translationX:(480-abs(rect.width)*scale)/2,y:(480-abs(rect.height)*scale)/2))
+                layer.setTransform(transform,at:cursor)
+                instruction.layerInstructions=[layer]
+                instructions.append(instruction)
                 if let audio=asset.tracks(withMediaType:.audio).first {
                     try? audioTrack?.insertTimeRange(range,of:audio,at:cursor)
                 }
@@ -658,6 +576,11 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         guard let exporter=AVAssetExportSession(asset:composition,presetName:AVAssetExportPresetHighestQuality) else {
             onClose?();return
         }
+        let videoComposition=AVMutableVideoComposition()
+        videoComposition.renderSize=CGSize(width:480,height:480)
+        videoComposition.frameDuration=CMTime(value:1,timescale:30)
+        videoComposition.instructions=instructions
+        exporter.videoComposition=videoComposition
         exporter.outputURL=result
         exporter.outputFileType = .mov
         exporter.exportAsynchronously { [weak self] in
@@ -668,25 +591,24 @@ final class CircleCaptureController: UIViewController, AVCaptureFileOutputRecord
         }
     }
     func fileOutput(_ output:AVCaptureFileOutput,didFinishRecordingTo url:URL,from connections:[AVCaptureConnection],error:Error?){
-        if error == nil && !cancelled {segments.append(url)}
+        DispatchQueue.main.async { [self] in
+        let successful = error == nil || (error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool == true
+        if successful && !cancelled {segments.append(url)}
         if cancelled {
             cleanup()
             onClose?()
             return
         }
-        if switching {
+        if switching && !stopWhenReady {
             switching=false
             cameraPosition=cameraPosition == .front ? .back : .front
-            configure()
-            DispatchQueue.main.asyncAfter(deadline:.now()+0.45) { [weak self] in
-                guard let self else{return}
-                self.toggleRecording()
-            }
+            configure(resumeRecording:true)
             return
         }
         ticker?.invalidate()
         cleanup()
         finishSegments()
+        }
     }
 }
 struct VideoCircleRecorder:UIViewControllerRepresentable {
@@ -713,8 +635,26 @@ struct VideoCircleRecorder:UIViewControllerRepresentable {
 struct ChatView: View {
     @EnvironmentObject var store: ChatStore
     let chat: Conversation
+    @Environment(\.dismiss) private var dismiss
+    @State private var showProfile=false
+    @State private var memberCount:Int?
+    @State private var pinnedMessage:ChatMessage?
+    @State private var emojiPicker=false
+    @AppStorage("savedMessages") private var savedMessages=""
     @State private var messages: [ChatMessage] = []
     @State private var draft = ""
+    @State private var draftLoaded=false
+    @State private var sending=false
+    @State private var reloading=false
+    @State private var reloadAgain=false
+    @State private var loadingOlder=false
+    @State private var nearLatest=true
+    @State private var newMessages=false
+    @State private var heartMessage:Int?
+    @AppStorage("messageAnimations") private var messageAnimations=true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var chatAnimation:Animation? {messageAnimations && !reduceMotion ? .spring(response:0.35,dampingFraction:0.85):nil}
+    private var draftKey:String {"draft-\(store.serverURL)-\(store.me?.id ?? 0)-\(chat.id)"}
     @State private var reply: ChatMessage?
     @State private var editing: ChatMessage?
     @State private var editText = ""
@@ -736,35 +676,50 @@ struct ChatView: View {
     @State private var audioPlayer: AVPlayer?
     @State private var playingAudioID: Int?
     @State private var audioEndObserver:NSObjectProtocol?
+    @State private var audioFailureObserver:NSObjectProtocol?
+    @State private var audioRequest=UUID()
     @State private var showingCall=false
     @State private var callURL:URL?
     var body: some View {
         VStack(spacing:0) {
+            ReferenceChatHeader(chat:chat,subtitle:chat.kind=="group" ? (memberCount.map{"\($0) участников"} ?? "Группа") : "@\(chat.other_user?.username ?? "")"){showProfile=true}
+            if let pinnedMessage {
+                HStack(spacing:9){RoundedRectangle(cornerRadius:2).fill(referenceGray).frame(width:3)
+                    VStack(alignment:.leading,spacing:1){Text("Закреплённое сообщение").font(.system(size:15,weight:.medium));Text(pinnedMessage.body.isEmpty ? "Вложение":pinnedMessage.body).font(.system(size:15)).lineLimit(1)}
+                    Spacer();Button {self.pinnedMessage=nil;UserDefaults.standard.removeObject(forKey:"pinned-\(store.me?.id ?? 0)-\(chat.id)")} label:{Image(systemName:"pin.slash").font(.system(size:20))}
+                }.padding(.horizontal,14).padding(.vertical,7).frame(height:49).modifier(ReferenceGlass()).padding(.horizontal,16).padding(.bottom,5)
+            }
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing:11) {
+                    LazyVStack(spacing:5) {
                         if older && !messages.isEmpty {
-                            Button("Загрузить ранние") { Task { await loadOlder() } }
+                            Button(loadingOlder ? "Загружаю…":"Загрузить ранние") { Task { await loadOlder() } }.disabled(loadingOlder)
                                 .font(.caption).foregroundStyle(muted).padding(10)
                         }
                         ForEach(messages) { message in
-                            HStack {
+                            HStack(alignment:.bottom,spacing:7) {
+                                if chat.kind=="group" && message.sender_id != store.me?.id {
+                                    ReferenceAvatar(person:Person(id:message.sender_id,username:"",display_name:message.sender_name,has_avatar:true),title:message.sender_name,size:34)
+                                }
                                 if message.sender_id == store.me?.id { Spacer(minLength:45) }
                                 VStack(alignment:message.sender_id == store.me?.id ? .trailing : .leading,spacing:4) {
                                     if chat.kind == "group" && message.sender_id != store.me?.id {
-                                        Text(message.sender_name).font(.caption.bold()).foregroundStyle(muted)
+                                        Text(message.sender_name).font(.system(size:13,weight:.semibold)).foregroundStyle(referenceBlue)
                                     }
+                                    if let replyID=message.reply_to {ReferenceReply(message:messages.first{$0.id==replyID})}
                                     if message.deleted == 0,let file=message.attachment, file.filename.hasPrefix("video_circle.") {
                                         VideoCircleBubble(file:file)
                                     } else if message.deleted == 0,let file=message.attachment {
                                         Button {
                                             Task {
                                                 if file.content_type.hasPrefix("audio/") {
+                                                    let request=UUID();audioRequest=request
                                                     if playingAudioID == file.id {
                                                         audioPlayer?.pause()
                                                         audioPlayer = nil
                                                         playingAudioID = nil
                                                     } else if let url = await store.downloadFile(file) {
+                                                        guard request == audioRequest else{return}
                                                         audioPlayer?.pause()
                                                         let newPlayer=AVPlayer(url: url)
                                                         audioPlayer = newPlayer
@@ -773,6 +728,11 @@ struct ChatView: View {
                                                         audioEndObserver=NotificationCenter.default.addObserver(forName:.AVPlayerItemDidPlayToEndTime,object:newPlayer.currentItem,queue:.main){_ in
                                                             newPlayer.seek(to:.zero)
                                                             playingAudioID=nil
+                                                        }
+                                                        if let audioFailureObserver {NotificationCenter.default.removeObserver(audioFailureObserver)}
+                                                        audioFailureObserver=NotificationCenter.default.addObserver(forName:.AVPlayerItemFailedToPlayToEndTime,object:newPlayer.currentItem,queue:.main){_ in
+                                                            playingAudioID=nil
+                                                            store.alertText="Не удалось воспроизвести голосовое. Попробуй загрузить его снова."
                                                         }
                                                         newPlayer.play()
                                                     }
@@ -793,9 +753,7 @@ struct ChatView: View {
                                         }.buttonStyle(.plain)
                                     }
                                     if message.deleted != 0 || !message.body.isEmpty {
-                                        Text(message.deleted != 0 ? "Сообщение удалено" : message.body)
-                                        .foregroundStyle(message.deleted != 0 ? muted : white)
-                                        .font(.body)
+                                        ExpressiveMessageBody(message:message)
                                     }
                                     HStack(spacing:6) {
                                         if message.edited_at != nil { Text("изм.") }
@@ -803,16 +761,21 @@ struct ChatView: View {
                                     }.font(.system(size:10)).foregroundStyle(muted)
                                     if !message.reactions.isEmpty {
                                         HStack { ForEach(message.reactions) { reaction in
-                                            Text("\(reaction.emoji) \(reaction.count)").font(.caption)
+                                            Text("\(reaction.emoji) \(reaction.count)").font(.caption).contentTransition(.numericText())
                                                 .padding(5).background(.white.opacity(0.1),in:Capsule())
                                         } }
                                     }
                                 }
                                 .padding(message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true ? 0 : 11)
-                                .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) ? Color.clear : (message.sender_id == store.me?.id ? glassBlue.opacity(0.25) : white.opacity(0.10)),in:RoundedRectangle(cornerRadius:20))
+                                .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) || (message.deleted==0 && (message.visual=="sticker" || NightwellSticker.isEmoji(message.body))) ? Color.clear : (message.sender_id == store.me?.id ? Color(red:0.25,green:0.22,blue:0.34) : Color(red:0.17,green:0.14,blue:0.21)),in:RoundedRectangle(cornerRadius:20))
+                                .overlay {if heartMessage==message.id {Image(systemName:"heart.fill").font(.system(size:42)).foregroundStyle(.pink).shadow(color:.pink.opacity(0.4),radius:12).transition(.scale.combined(with:.opacity)).allowsHitTesting(false)}}
+                                .onTapGesture(count:2){guard message.deleted==0 else{return};Task{await quickHeart(message.id)}}
                                 .contextMenu {
                                     if message.deleted == 0 {
                                         Button("Ответить",systemImage:"arrowshape.turn.up.left") { reply=message }
+                                        Button("Закрепить",systemImage:"pin") {pinnedMessage=message;UserDefaults.standard.set(message.id,forKey:"pinned-\(store.me?.id ?? 0)-\(chat.id)")}
+                                        Button("В избранное",systemImage:"bookmark") {let key="\(store.me?.id ?? 0):\(message.id)";var ids=Set(savedMessages.split(separator:",").map(String.init));ids.insert(key);savedMessages=ids.sorted().joined(separator:",")}
+
                                         Button("🤍") { Task { await store.react(message.id,emoji:"🤍") } }
                                         Button("👍") { Task { await store.react(message.id,emoji:"👍") } }
                                         if message.sender_id == store.me?.id {
@@ -822,19 +785,21 @@ struct ChatView: View {
                                     }
                                 }
                                 if message.sender_id != store.me?.id { Spacer(minLength:45) }
-                            }.id(message.id)
+                            }.id(message.id).transition(.asymmetric(insertion:.move(edge:message.sender_id==store.me?.id ? .trailing:.leading).combined(with:.opacity),removal:.opacity))
                         }
-                    }.padding(.horizontal,14).padding(.top,12).padding(.bottom,100)
+                        Color.clear.frame(height:1).id("latest").onAppear{nearLatest=true;newMessages=false}.onDisappear{nearLatest=false}
+                    }.padding(.horizontal,8).padding(.top,6).padding(.bottom,8)
                 }
                 .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
                 .onTapGesture { composerFocused=false }
                 .onChange(of:messages.last?.id) { _,_ in
-                    if let id=messages.last?.id { withAnimation(.easeOut(duration:0.2)) { proxy.scrollTo(id,anchor:.bottom) } }
+                    if nearLatest || messages.last?.sender_id==store.me?.id {
+                        withAnimation(.easeOut(duration:0.2)){proxy.scrollTo("latest",anchor:.bottom)}
+                    } else {newMessages=true}
                 }
+                .overlay(alignment:.bottomTrailing){if newMessages {Button {withAnimation{proxy.scrollTo("latest",anchor:.bottom)};newMessages=false} label:{Label("Новые",systemImage:"arrow.down").font(.system(size:13,weight:.semibold)).padding(12).background(referenceBlue,in:Capsule())}.padding(12)}}
             }
-            .padding(.bottom,-74)
-            // Messages continue underneath the floating transparent composer.
             if let reply {
                 HStack {
                     VStack(alignment:.leading) { Text("Ответ \(reply.sender_name)").font(.caption.bold()); Text(reply.body).lineLimit(1).font(.caption).foregroundStyle(muted) }
@@ -846,26 +811,27 @@ struct ChatView: View {
                 HStack(spacing:8) { ProgressView().tint(.white); Text("Загрузка медиа…").font(.caption) }
                     .padding(.horizontal,16).padding(.top,6)
             }
-            HStack(alignment:.bottom,spacing:10) {
+
+            HStack(alignment:.bottom,spacing:7) {
                 Menu {
                     Button("Фото",systemImage:"photo") { showingPhotoPicker=true }
                     Button("Файл",systemImage:"paperclip") { showingFilePicker=true }
                 } label: {
                     Image(systemName:"paperclip").font(.title2)
-                        .frame(width:38,height:42)
+                        .frame(width:40,height:40).modifier(ReferenceGlass(radius:22))
                 }.disabled(uploading)
-                TextField("Сообщение",text:$draft,axis:.vertical)
-                    .focused($composerFocused)
-                    .lineLimit(1...5).padding(12)
-                    .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:18))
+                HStack(spacing:4){
+                    TextField("Сообщение",text:$draft,axis:.vertical).focused($composerFocused).disabled(sending).lineLimit(1...5).font(.system(size:17)).padding(.leading,12).padding(.vertical,9)
+                    Button {emojiPicker.toggle()} label:{Image(systemName:"face.smiling").font(.system(size:22)).foregroundStyle(referenceGray)}.padding(.trailing,10)
+                }.modifier(ReferenceGlass(radius:25))
                 if !draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
                     Button { Task { await submit() } } label: {
-                        Image(systemName:"arrow.up").font(.headline)
-                            .foregroundStyle(.black).frame(width:42,height:42).background(.white,in:Circle())
-                    }
+                        Image(systemName:sending ? "ellipsis":"arrow.up").font(.headline)
+                            .foregroundStyle(.white).frame(width:42,height:42).background(LinearGradient(colors:[referenceBlue,.indigo],startPoint:.topLeading,endPoint:.bottomTrailing),in:Circle())
+                    }.disabled(sending).accessibilityLabel(sending ? "Отправка":"Отправить сообщение")
                 } else {
-                    Image(systemName:voiceRecorder.isRecording ? "stop.circle.fill" : (recordingModeVideo ? "video.circle.fill" : "mic.fill"))
-                        .font(.title2).frame(width:42,height:42)
+                    Image(systemName:voiceRecorder.isRecording ? "stop.circle.fill" : (recordingModeVideo ? "video" : "mic"))
+                        .font(.system(size:25,weight:.regular)).frame(width:40,height:40).modifier(ReferenceGlass(radius:22))
                         .contentShape(Circle())
                         .gesture(DragGesture(minimumDistance:0)
                             .onChanged { _ in
@@ -881,6 +847,7 @@ struct ChatView: View {
                                             showingVideoRecorder=true
                                         } else {
                                             Task {await voiceRecorder.start()
+                                                if !mediaPressing {voiceRecorder.cancel();return}
                                                 if let error=voiceRecorder.errorMessage {store.alertText=error}
                                             }
                                         }
@@ -895,7 +862,6 @@ struct ChatView: View {
                                         stopCircleRequested=true
                                     } else {
                                         Task {
-                                            try? await Task.sleep(nanoseconds:250_000_000)
                                             if let file=voiceRecorder.finish(),let data=try? Data(contentsOf:file) {
                                                 uploading=true
                                                 let success=await store.sendFile(chatID:chat.id,bytes:data,filename:"voice.m4a",mime:"audio/mp4")
@@ -913,30 +879,18 @@ struct ChatView: View {
                     .allowsHitTesting(!uploading)
                 }
             }
-            .padding(.horizontal,12).padding(.vertical,9)
-            .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:30))
-            .overlay(RoundedRectangle(cornerRadius:30).stroke(.white.opacity(0.16)))
-            .padding(.horizontal,8).padding(.bottom,5)
+            .padding(.horizontal,16).padding(.vertical,5)
+
+            .padding(.bottom,5)
         }
-        .background(NightwellBackground())
-        .navigationTitle(chat.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement:.topBarTrailing){
-                if let person=chat.other_user {
-                    Button {
-                        Task {
-                            if let call=await store.makeCall(to:person.id),
-                               let url=store.voiceURL(call){
-                                callURL=url;showingCall=true
-                            }
-                        }
-                    } label:{Image(systemName:"phone")}
-                }
-            }
-        }
+        .background(ChatWallpaper())
+        .toolbar(.hidden,for:.navigationBar)
+        .navigationBarBackButtonHidden(true)
+        .foregroundStyle(.white)
+        .fullScreenCover(isPresented:$showProfile){ReferenceGroupProfile(chat:chat){dismiss()}}
         .sheet(isPresented:$showingCall){if let callURL {SafariCallView(url:callURL)}}
-        .fullScreenCover(isPresented:$showingVideoRecorder){
+        .sheet(isPresented:$emojiPicker){ExpressivePicker(busy:sending,insertEmoji:{draft += $0;emojiPicker=false},sendSticker:{sticker in Task{await sendSticker(sticker)}})}
+        .overlay { if showingVideoRecorder {
             VideoCircleRecorder(onVideo: { url in
                 Task {
                     guard let data=try? Data(contentsOf:url) else {
@@ -953,7 +907,7 @@ struct ChatView: View {
                     uploading=false
                 }
             }, onClose: { showingVideoRecorder=false; stopCircleRequested=false }, autoStart:startCircleImmediately, stopRequested:stopCircleRequested).ignoresSafeArea()
-        }
+        }}
         .photosPicker(isPresented:$showingPhotoPicker,selection:$pickedPhoto,matching:.images)
         .fileImporter(isPresented:$showingFilePicker,allowedContentTypes:[.item]){
             result in
@@ -981,12 +935,13 @@ struct ChatView: View {
                 uploading=false
             }
         }
-        .onDisappear { audioPlayer?.pause(); audioPlayer = nil; playingAudioID = nil; if let audioEndObserver {NotificationCenter.default.removeObserver(audioEndObserver)}; voiceRecorder.cancel() }
+        .onDisappear { audioRequest=UUID();if let audioFailureObserver {NotificationCenter.default.removeObserver(audioFailureObserver)}; audioPlayer?.pause(); audioPlayer = nil; playingAudioID = nil; if let audioEndObserver {NotificationCenter.default.removeObserver(audioEndObserver)}; voiceRecorder.cancel() }
         .onChange(of:playingAudioID) { _, activeID in
             if activeID == nil { audioPlayer?.pause() }
         }
         .quickLookPreview($preview)
-        .task { await reload() }
+        .onChange(of:draft){_,value in if draftLoaded {if value.isEmpty{UserDefaults.standard.removeObject(forKey:draftKey)}else{UserDefaults.standard.set(value,forKey:draftKey)}}}
+        .task { if !draftLoaded {draft=UserDefaults.standard.string(forKey:draftKey) ?? "";draftLoaded=true};await reload();if let details:ChatDetails=try? await store.request("/chats/\(chat.id)/details"){memberCount=details.members.count} }
         .onChange(of:store.eventVersion) { _,_ in Task { await reload() } }
         .alert("Изменить сообщение",isPresented:Binding(get:{editing != nil},set:{if !$0 { editing=nil }})) {
             TextField("Сообщение",text:$editText)
@@ -995,26 +950,65 @@ struct ChatView: View {
         }
     }
     private func reload() async {
-        let data=await store.messages(chat.id)
-        messages=data
-        if let last=data.last { await store.markRead(chatID:chat.id,messageID:last.id) }
+        guard !reloading else {reloadAgain=true;return}
+        reloading=true
+        defer {reloading=false}
+        repeat {
+            reloadAgain=false
+            do {
+                let data:[ChatMessage]=try await store.request("/chats/\(chat.id)/messages")
+                let firstLoad=messages.isEmpty
+                var merged=Dictionary(uniqueKeysWithValues:messages.map{($0.id,$0)})
+                for message in data {merged[message.id]=message}
+                withAnimation(firstLoad ? nil:chatAnimation){messages=merged.values.sorted{$0.id<$1.id}}
+                if firstLoad {older=data.count>=50}
+                let pinnedID=UserDefaults.standard.integer(forKey:"pinned-\(store.me?.id ?? 0)-\(chat.id)")
+                pinnedMessage=messages.first{$0.id==pinnedID && $0.deleted==0}
+                if let last=data.last {await store.markRead(chatID:chat.id,messageID:last.id)}
+            } catch {store.alertText=error.localizedDescription}
+        } while reloadAgain && !Task.isCancelled
     }
     private func loadOlder() async {
-        guard let first=messages.first else { return }
-        let earlier=await store.messages(chat.id,before:first.id)
-        older = earlier.count >= 50
-        messages=earlier+messages
+        guard !loadingOlder,let first=messages.first else {return}
+        loadingOlder=true;defer{loadingOlder=false}
+        do {
+            let earlier:[ChatMessage]=try await store.request("/chats/\(chat.id)/messages?before=\(first.id)")
+            older=earlier.count>=50
+            var merged=Dictionary(uniqueKeysWithValues:messages.map{($0.id,$0)})
+            for message in earlier {merged[message.id]=message}
+            messages=merged.values.sorted{$0.id<$1.id}
+        }catch{store.alertText=error.localizedDescription}
+    }
+    private func quickHeart(_ id:Int) async {
+        guard heartMessage==nil else{return}
+        UIImpactFeedbackGenerator(style:.soft).impactOccurred()
+        withAnimation(chatAnimation){heartMessage=id}
+        await store.react(id,emoji:"❤️")
+        await reload()
+        try? await Task.sleep(for:.milliseconds(650))
+        withAnimation(chatAnimation){heartMessage=nil}
+    }
+    private func sendSticker(_ sticker:NightwellSticker) async {
+        guard !sending else{return}
+        sending=true;defer{sending=false}
+        guard let sent=await store.send(chat.id,text:sticker.emoji,reply:reply?.id,visual:"sticker") else{return}
+        emojiPicker=false;reply=nil
+        UIImpactFeedbackGenerator(style:.light).impactOccurred()
+        if !messages.contains(where:{$0.id==sent.id}) {withAnimation(chatAnimation){messages.append(sent)}}
+        await reload();await store.reloadChats()
     }
     private func submit() async {
         let text=draft.trimmingCharacters(in:.whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        draft=""
-        let sent=await store.send(chat.id,text:text,reply:reply?.id)
-        if sent == nil { draft=text }
-        reply=nil
+        guard !text.isEmpty,!sending else{return}
+        sending=true;defer{sending=false}
+        guard let sent=await store.send(chat.id,text:text,reply:reply?.id) else{return}
+        draft="";reply=nil
+        UIImpactFeedbackGenerator(style:.light).impactOccurred()
+        if !messages.contains(where:{$0.id==sent.id}) {withAnimation(chatAnimation){messages.append(sent)}}
         await reload()
         await store.reloadChats()
     }
+
 }
 
 struct SettingsView: View {
@@ -1058,13 +1052,14 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Приложение") {
-                    HStack { Image(systemName:"bell.badge.fill").foregroundStyle(.red); Text("Уведомления и звуки"); Spacer(); Text("Системные").foregroundStyle(.secondary) }
-                    HStack { Image(systemName:"lock.fill").foregroundStyle(.gray); Text("Конфиденциальность") }
-                    HStack { Image(systemName:"externaldrive.fill").foregroundStyle(.green); Text("Данные и память") }
-                    HStack { Image(systemName:"circle.lefthalf.filled").foregroundStyle(.cyan); Text("Оформление"); Spacer(); Text("Тёмное").foregroundStyle(.secondary) }
+                    Button {if let url=URL(string:UIApplication.openSettingsURLString){UIApplication.shared.open(url)}} label:{Label("Уведомления и звуки",systemImage:"bell.badge.fill")}
+                    NavigationLink {PhoneLinkView()} label:{Label("Конфиденциальность",systemImage:"lock.fill")}
+                    NavigationLink {DataSettingsView()} label:{Label("Данные и память",systemImage:"externaldrive.fill")}
+                    NavigationLink {AppearanceSettingsView()} label:{Label("Оформление",systemImage:"circle.lefthalf.filled")}
+
                 }
                 Section("Версия") {
-                    Text("Nightwell Chat 0.7")
+                    Text("Nightwell Chat 0.9")
                 }
                 Section("Сервер") {
                     TextField("https://chat.nightwell.fun",text:$server)
@@ -1074,7 +1069,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(muted)
                 }
                 Section { Button("Выйти из аккаунта",role:.destructive) { store.logout(); dismiss() } }
-            }.scrollContentBackground(.hidden).background(Color.black.ignoresSafeArea())
+            }.scrollContentBackground(.hidden).background(NightwellBackground())
                 .environment(\.defaultMinListRowHeight,54)
                 .scrollDismissesKeyboard(.interactively)
                 .navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline)
@@ -1092,11 +1087,16 @@ final class NightwellVoiceRecorder: NSObject, ObservableObject {
     @Published var errorMessage: String?
     private var recorder: AVAudioRecorder?
     private var recordingURL: URL?
+    private var generation=0
 
     func start() async {
+        generation += 1
+        let request=generation
+        errorMessage=nil
         let allowed = await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { continuation.resume(returning: $0) }
         }
+        guard request == generation else {return}
         guard allowed else {
             errorMessage = "Разреши доступ к микрофону в настройках iPhone"
             return
@@ -1126,18 +1126,50 @@ final class NightwellVoiceRecorder: NSObject, ObservableObject {
     }
 
     func finish() -> URL? {
+        generation += 1
         guard isRecording else { return nil }
         recorder?.stop()
         recorder = nil
         isRecording = false
-        return recordingURL
+        let result=recordingURL
+        recordingURL=nil
+        try? AVAudioSession.sharedInstance().setActive(false, options:.notifyOthersOnDeactivation)
+        return result
     }
 
     func cancel() {
+        generation += 1
         recorder?.stop()
         recorder?.deleteRecording()
         recorder = nil
         recordingURL = nil
         isRecording = false
+        try? AVAudioSession.sharedInstance().setActive(false, options:.notifyOthersOnDeactivation)
+    }
+}
+
+
+struct AppearanceSettingsView:View {
+    @AppStorage("ambientBackground") private var ambient=true
+    @AppStorage("messageAnimations") private var messageAnimations=true
+    var body:some View {Form {Toggle("Светящийся фон",isOn:$ambient)
+        Toggle("Анимации сообщений и эмодзи",isOn:$messageAnimations)
+        Text("Живые эмодзи, стикеры и мягкое появление сообщений. При включённом уменьшении движения эффекты отключаются.").font(.footnote).foregroundStyle(.secondary)
+        Text("Стеклянные панели используют системный Liquid Glass на iOS 26 и новее.").font(.footnote)
+    }.navigationTitle("Оформление").scrollContentBackground(.hidden).background(NightwellBackground())}
+}
+struct DataSettingsView:View {
+    @State private var size=""
+    private var folder:URL {FileManager.default.temporaryDirectory.appendingPathComponent("NightwellAttachments",isDirectory:true)}
+    var body:some View {Form {Section("Загруженные вложения") {
+        Text(size)
+        Button("Очистить временные файлы",role:.destructive){try? FileManager.default.removeItem(at:folder);refresh()}
+        Text("Сообщения и вложения на сервере сохранятся.").font(.footnote)
+    }}.navigationTitle("Данные и память").onAppear{refresh()}}
+    private func refresh(){
+        let files=FileManager.default.enumerator(at:folder,includingPropertiesForKeys:[.fileSizeKey])
+        var bytes:Int64=0
+        while let url=files?.nextObject() as? URL {bytes += Int64((try? url.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0)}
+        size=ByteCountFormatter.string(fromByteCount:bytes,countStyle:.file)
     }
 }

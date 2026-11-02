@@ -28,6 +28,13 @@ def test_avatar_and_attachments_are_authenticated_and_chat_scoped():
         chat_id=chat.json()['id']
         avatar=c.post('/me/avatar',headers=ah,files={'file':('my.png',image_bytes(),'image/png')})
         assert avatar.status_code == 200,avatar.text
+        profile=c.get('/me',headers=ah).json()
+        assert profile['has_avatar'] is True
+        assert 'avatar_key' not in profile
+        login=c.post('/auth/login',json={'username':'mediaalice','password':'testing-password-123'}).json()
+        new_headers={'Authorization':'Bearer '+login['access_token']}
+        assert c.get('/me',headers=new_headers).json()['has_avatar'] is True
+        assert c.patch('/me',headers=ah,json={'display_name':'Alice'}).json()['has_avatar'] is True
         assert c.get(f'/users/{aid}/avatar').status_code == 401
         returned=c.get(f'/users/{aid}/avatar',headers=bh)
         assert returned.status_code == 200 and returned.headers['content-type'].startswith('image/jpeg')
@@ -63,3 +70,4 @@ def test_voice_call_accept_end_and_access():
         ended=c.post(f'/calls/{call_id}/end',headers=ah)
         assert ended.status_code == 200
         assert c.post(f'/calls/{call_id}/accept',headers=bh).status_code == 409
+

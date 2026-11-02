@@ -78,6 +78,12 @@ def setup():
         CREATE INDEX IF NOT EXISTS idx_calls_to ON calls(callee_id,status,expires_at);
         CREATE INDEX IF NOT EXISTS idx_calls_from ON calls(caller_id,created_at);
         """)
+        message_cols={r[1] for r in c.execute("PRAGMA table_info(messages)")}
+        if "visual" not in message_cols: c.execute("ALTER TABLE messages ADD COLUMN visual TEXT NOT NULL DEFAULT 'text'")
+        call_cols={r[1] for r in c.execute("PRAGMA table_info(calls)")}
+        if "answered" not in call_cols: c.execute("ALTER TABLE calls ADD COLUMN answered INTEGER NOT NULL DEFAULT -1")
+        member_cols={r[1] for r in c.execute("PRAGMA table_info(members)")}
+        if "muted" not in member_cols: c.execute("ALTER TABLE members ADD COLUMN muted INTEGER NOT NULL DEFAULT 0")
         # Media schema migration is additive: existing messages and user accounts stay intact.
         user_cols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
         if "avatar_key" not in user_cols:
@@ -142,7 +148,10 @@ class ChatCreate(BaseModel):
     title: str = Field(min_length=1,max_length=80)
     user_ids: list[int] = Field(default_factory=list,max_length=100)
 
+STICKERS={"🔥","😎","🫶","💀","🚀","🥹","🫠","⚡️","🤝","🎉","👀","🌙"}
+
 class MessageCreate(BaseModel):
+    visual: Literal["text","sticker"] = "text"
     body: str = Field(min_length=1,max_length=4000)
     reply_to: int | None = None
 
@@ -195,7 +204,8 @@ def member(c, chat_id, uid):
 
 def user_public(row):
     return {**{k:row[k] for k in ("id","username","display_name")},
-            "has_avatar": bool(row["avatar_key"]) if "avatar_key" in row.keys() else False}
+            "has_avatar": bool(row["avatar_key"]) if "avatar_key" in row.keys() else False,
+            "online":bool(clients.get(row["id"]))}
 
 # Live socket connections are scoped to one process. Use Redis pub/sub when scaling to multiple workers.
 clients: dict[int,set[WebSocket]] = {}
@@ -296,8 +306,12 @@ _push_jobs: set[asyncio.Task] = set()
 def _schedule_push(recipient_ids:list[int], payload:dict) -> None:
     unique=list(set(recipient_ids))
     if not unique:return
-    placeholders=",".join("?" for _ in unique)
     with db() as c:
+        if payload.get("chat_id"):
+            muted_ids={r[0] for r in c.execute("SELECT user_id FROM members WHERE chat_id=? AND muted=1",(payload["chat_id"],))}
+            unique=[uid for uid in unique if uid not in muted_ids]
+        if not unique:return
+        placeholders=",".join("?" for _ in unique)
         devices=[dict(row) for row in c.execute(
             f"SELECT kind,token FROM push_devices WHERE user_id IN ({placeholders})",
             unique).fetchall()]
@@ -355,14 +369,14 @@ def login(data: Credentials):
     return {"access_token":token(row["id"]),"token_type":"bearer","user":user_public(row)}
 
 @app.get("/me")
-def me(user=Depends(current)): return user
+def me(user=Depends(current)): return user_public(user)
 
 @app.patch("/me")
 def update_me(body: Profile,user=Depends(current)):
     if not body.display_name.strip(): raise HTTPException(422,"Display name cannot be blank")
     with db() as c:
         c.execute("UPDATE users SET display_name=? WHERE id=?",(body.display_name.strip(),user["id"]))
-    return {**user,"display_name":body.display_name.strip()}
+    return {**user_public(user),"display_name":body.display_name.strip()}
 
 # Phone/password login and contact discovery. A format check is NOT proof
 # of SIM ownership. No SMS, calls or third-party lookup are performed.
@@ -656,13 +670,47 @@ def chat_view(c, row, uid):
     read=c.execute("SELECT last_read_id FROM members WHERE chat_id=? AND user_id=?",(cid,uid)).fetchone()
     unread=c.execute("SELECT COUNT(*) FROM messages WHERE chat_id=? AND id>? AND sender_id<>?",(cid,read[0] if read else 0,uid)).fetchone()[0]
     return {"id":cid,"kind":row["kind"],"title":other["display_name"] if other else row["title"],
-      "other_user":dict(other) if other else None,"owner_id":row["owner_id"],"unread":unread,"last_message":dict(last) if last else None}
+      "other_user":user_public(other) if other else None,"owner_id":row["owner_id"],"unread":unread,"last_message":dict(last) if last else None}
 
 @app.get("/chats")
 def get_chats(user=Depends(current)):
     with db() as c:
         rows=c.execute("SELECT c.* FROM chats c JOIN members m ON m.chat_id=c.id WHERE m.user_id=? ORDER BY COALESCE((SELECT MAX(id) FROM messages WHERE chat_id=c.id),0) DESC,c.id DESC",(user["id"],)).fetchall()
         return [chat_view(c,row,user["id"]) for row in rows]
+
+@app.get("/chats/{chat_id}/details")
+def chat_details(chat_id:int,user=Depends(current)):
+    with db() as c:
+        role=member(c,chat_id,user["id"])
+        chat=c.execute("SELECT kind FROM chats WHERE id=?",(chat_id,)).fetchone()
+        muted=c.execute("SELECT muted FROM members WHERE chat_id=? AND user_id=?",(chat_id,user["id"])).fetchone()[0]
+        people=c.execute("SELECT u.id,u.username,u.display_name,u.avatar_key FROM users u JOIN members m ON m.user_id=u.id WHERE m.chat_id=? ORDER BY m.role='owner' DESC,u.display_name",(chat_id,)).fetchall()
+    return {"members":[user_public(p) for p in people],"role":role,"kind":chat["kind"],"muted":bool(muted)}
+
+class ChatNotificationSettings(BaseModel):
+    muted:bool
+
+@app.patch("/chats/{chat_id}/notifications")
+def chat_notifications(chat_id:int,body:ChatNotificationSettings,user=Depends(current)):
+    with db() as c:
+        member(c,chat_id,user["id"])
+        c.execute("UPDATE members SET muted=? WHERE chat_id=? AND user_id=?",(int(body.muted),chat_id,user["id"]))
+    return {"ok":True}
+
+@app.delete("/chats/{chat_id}/membership")
+async def leave_chat(chat_id:int,user=Depends(current)):
+    with db() as c:
+        role=member(c,chat_id,user["id"])
+        chat=c.execute("SELECT kind FROM chats WHERE id=?",(chat_id,)).fetchone()
+        if chat["kind"]!="group": raise HTTPException(400,"Only groups can be left")
+        remaining=[uid for uid in members(c,chat_id) if uid!=user["id"]]
+        if role=="owner" and remaining:
+            successor=min(remaining)
+            c.execute("UPDATE members SET role='owner' WHERE chat_id=? AND user_id=?",(chat_id,successor))
+            c.execute("UPDATE chats SET owner_id=? WHERE id=?",(successor,chat_id))
+        c.execute("DELETE FROM members WHERE chat_id=? AND user_id=?",(chat_id,user["id"]))
+    await notify(remaining+[user["id"]],{"type":"chats_changed"})
+    return {"ok":True}
 
 @app.post("/chats/direct/{other_id}")
 async def direct(other_id:int,user=Depends(current)):
@@ -721,11 +769,12 @@ def get_messages(chat_id:int,before:int|None=None,limit:int=Query(50,ge=1,le=100
 @app.post("/chats/{chat_id}/messages",status_code=201)
 async def send_message(chat_id:int,payload:MessageCreate,user=Depends(current)):
     if not payload.body.strip(): raise HTTPException(422,"Message cannot be blank")
+    if payload.visual=="sticker" and payload.body.strip() not in STICKERS: raise HTTPException(422,"Unknown sticker")
     with db() as c:
         member(c,chat_id,user["id"])
         if payload.reply_to and not c.execute("SELECT id FROM messages WHERE id=? AND chat_id=?",(payload.reply_to,chat_id)).fetchone():
             raise HTTPException(400,"Reply message not in chat")
-        mid=c.execute("INSERT INTO messages(chat_id,sender_id,body,reply_to) VALUES(?,?,?,?)",(chat_id,user["id"],payload.body.strip(),payload.reply_to)).lastrowid
+        mid=c.execute("INSERT INTO messages(chat_id,sender_id,body,reply_to,visual) VALUES(?,?,?,?,?)",(chat_id,user["id"],payload.body.strip(),payload.reply_to,payload.visual)).lastrowid
         msg=message_view(c,c.execute("SELECT * FROM messages WHERE id=?",(mid,)).fetchone())
         ids=members(c,chat_id)
     await notify(ids,{"type":"message","chat_id":chat_id,"message":msg})
@@ -744,10 +793,11 @@ def own_message(c,mid,uid):
 @app.patch("/messages/{message_id}")
 async def edit_message(message_id:int,payload:MessageCreate,user=Depends(current)):
     if not payload.body.strip(): raise HTTPException(422,"Message cannot be blank")
+    if payload.visual=="sticker" and payload.body.strip() not in STICKERS: raise HTTPException(422,"Unknown sticker")
     with db() as c:
         row=own_message(c,message_id,user["id"])
         if row["deleted"]: raise HTTPException(400,"Deleted message")
-        c.execute("UPDATE messages SET body=?,edited_at=CURRENT_TIMESTAMP WHERE id=?",(payload.body.strip(),message_id))
+        c.execute("UPDATE messages SET body=?,visual=?,edited_at=CURRENT_TIMESTAMP WHERE id=?",(payload.body.strip(),payload.visual,message_id))
         msg=message_view(c,c.execute("SELECT * FROM messages WHERE id=?",(message_id,)).fetchone())
         ids=members(c,row["chat_id"])
     await notify(ids,{"type":"message_updated","chat_id":row["chat_id"],"message":msg})
@@ -834,13 +884,28 @@ async def create_voice_call(other_id: int, user=Depends(current)):
             (user["id"], other_id,user["id"],other_id,now)).fetchone()
         if ongoing: raise HTTPException(409, "Another call is in progress")
         cid = uuid.uuid4().hex
-        c.execute("INSERT INTO calls VALUES (?,?,?,?,?,?,?)",
+        c.execute("INSERT INTO calls(id,chat_id,caller_id,callee_id,status,created_at,expires_at,answered) VALUES (?,?,?,?,?,?,?,0)",
                   (cid,pair["chat_id"],user["id"],other_id,"ringing",now,now+CALL_RING_SECONDS))
     await notify([other_id], {"type":"incoming_call", "call_id":cid, "from_id":user["id"]})
     _schedule_push([other_id],{"type":"incoming_call","title":"Входящий звонок",
         "body":user["display_name"]+" звонит","call_id":cid,"chat_id":str(pair["chat_id"])})
     return {**call_public({"id":cid,"chat_id":pair["chat_id"],"caller_id":user["id"],
                            "callee_id":other_id,"status":"ringing","created_at":now}),**call_target(cid,user["id"])}
+
+@app.get("/calls/history")
+def call_history(user=Depends(current)):
+    uid=user["id"]
+    with db() as c:
+        rows=c.execute("SELECT * FROM calls WHERE caller_id=? OR callee_id=? ORDER BY created_at DESC,id DESC LIMIT 200",(uid,uid)).fetchall()
+        result=[]
+        for row in rows:
+            other=row["callee_id"] if row["caller_id"]==uid else row["caller_id"]
+            person=c.execute("SELECT id,username,display_name,avatar_key FROM users WHERE id=?",(other,)).fetchone()
+            # Older call records lack acceptance timestamps; do not invent durations.
+            missed=row["callee_id"]==uid and (row["status"]=="declined" or (row["status"]=="ended" and row["answered"]==0))
+            if row["callee_id"]==uid and row["status"]=="ringing" and row["expires_at"]<int(time.time()): missed=True
+            result.append({**call_public(row),"person":user_public(person),"outgoing":row["caller_id"]==uid,"missed":missed})
+        return result
 
 @app.get("/calls/pending")
 def pending_calls(user=Depends(current)):
@@ -857,7 +922,7 @@ async def accept_call(cid: str, user=Depends(current)):
         row = call_row(c,cid,user["id"])
         if row["callee_id"] != user["id"]: raise HTTPException(403, "Only recipient can accept")
         if row["status"] != "ringing": raise HTTPException(409, "Call is not ringing")
-        c.execute("UPDATE calls SET status='active',expires_at=? WHERE id=?",(int(time.time())+CALL_MAX_SECONDS,cid))
+        c.execute("UPDATE calls SET status='active',answered=1,expires_at=? WHERE id=?",(int(time.time())+CALL_MAX_SECONDS,cid))
         caller=row["caller_id"]
     await notify([caller],{"type":"call_accepted","call_id":cid})
     return {"ok":True,**call_target(cid,user["id"])}
@@ -932,7 +997,7 @@ async def call_signal(ws: WebSocket, cid: str, ticket: str = Query(default="")):
                     await other.send_json({"type":"ended"})
                 await notify([row["caller_id"],row["callee_id"]],{"type":"call_ended","call_id":cid})
                 break
-            if kind not in ("offer","answer","ice"): continue
+            if kind not in ("offer","answer","ice","media_ready"): continue
             # Keep message type and payload small, never relay untrusted commands.
             raw=payload.get("data")
             if len(str(raw))>12000: continue

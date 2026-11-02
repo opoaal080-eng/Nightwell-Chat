@@ -913,10 +913,13 @@ async def call_signal(ws: WebSocket, cid: str, ticket: str = Query(default="")):
         return
     await ws.accept()
     room=call_peers.setdefault(cid,{})
-    if uid in room:
-        await ws.close(code=1008)
-        return
+    # A reconnect can arrive before the old socket's disconnect is observed.
+    # Replace that socket without letting its finalizer remove the new one.
+    previous=room.get(uid)
     room[uid]=ws
+    if previous is not None:
+        try: await previous.close(code=1000)
+        except (RuntimeError,WebSocketDisconnect): pass
     try:
         await ws.send_json({"type":"connected","role":"caller" if uid==row["caller_id"] else "callee"})
         if len(room)==2 and row["status"]=="active":
@@ -946,12 +949,15 @@ async def call_signal(ws: WebSocket, cid: str, ticket: str = Query(default="")):
     except (WebSocketDisconnect,RuntimeError,ValueError):
         pass
     finally:
-        room.pop(uid,None)
-        if not room: call_peers.pop(cid,None)
-        else:
-            for other in list(room.values()):
-                try: await other.send_json({"type":"peer_left"})
-                except Exception: pass
+        # Only the current connection may remove itself from the room.
+        if room.get(uid) is ws:
+            room.pop(uid,None)
+            if not room:
+                if call_peers.get(cid) is room: call_peers.pop(cid,None)
+            else:
+                for other in list(room.values()):
+                    try: await other.send_json({"type":"peer_left"})
+                    except Exception: pass
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws:WebSocket):

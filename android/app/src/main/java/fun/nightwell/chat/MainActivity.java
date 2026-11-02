@@ -239,7 +239,24 @@ public final class MainActivity extends Activity {
             JSONObject ch=json(b);chatId=ch.getInt("id");otherId=id;chatTitle=ch.optString("title");chat();
         });
     }
-    void chat(){enter("chat");heading(chatTitle);btn("← Список чатов",this::inbox);
+    void contactProfile(){
+        enter("contact_profile");
+        btn("← Назад к переписке",this::chat);
+        heading(chatTitle);
+        hint("Профиль собеседника");
+        if(otherId>0) {
+            btn("Позвонить",()->{chat();startCall();});
+        }
+        btn("Вернуться в чат",this::chat);
+    }
+    @Override public void onBackPressed(){
+        if("contact_profile".equals(screen)){chat();return;}
+        if("chat".equals(screen)){inbox();return;}
+        super.onBackPressed();
+    }
+    void chat(){enter("chat");heading(chatTitle);
+        if(otherId>0)btn("Открыть профиль собеседника",this::contactProfile);
+        btn("← Список чатов",this::inbox);
         if(otherId>0)btn("Позвонить",this::startCall);
         messages=new LinearLayout(this);messages.setOrientation(1);page.addView(messages);
         EditText draft=field("Напиши сообщение...",false);

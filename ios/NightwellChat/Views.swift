@@ -825,13 +825,19 @@ struct ChatView: View {
                                     }
                                 }
                                 if message.sender_id != store.me?.id { Spacer(minLength:45) }
-                            }.id(message.id)
+                            }
+                            .transition(.asymmetric(
+                                insertion:.opacity.combined(with:.move(edge:.bottom)).combined(with:.scale(scale:0.96)),
+                                removal:.opacity
+                            ))
+                            .id(message.id)
                         }
                     }.padding(.horizontal,14).padding(.top,12).padding(.bottom,100)
                 }
                 .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
                 .onTapGesture { composerFocused=false }
+                .animation(.spring(response:0.32,dampingFraction:0.82),value:messages.last?.id)
                 .onChange(of:messages.last?.id) { _,_ in
                     if let id=messages.last?.id { withAnimation(.easeOut(duration:0.2)) { proxy.scrollTo(id,anchor:.bottom) } }
                 }

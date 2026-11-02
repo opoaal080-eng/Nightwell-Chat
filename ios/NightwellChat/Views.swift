@@ -651,6 +651,9 @@ struct ChatView: View {
     @State private var nearLatest=true
     @State private var newMessages=false
     @State private var heartMessage:Int?
+    @AppStorage("messageAnimations") private var messageAnimations=true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var chatAnimation:Animation? {messageAnimations && !reduceMotion ? .spring(response:0.35,dampingFraction:0.85):nil}
     private var draftKey:String {"draft-\(store.serverURL)-\(store.me?.id ?? 0)-\(chat.id)"}
     @State private var reply: ChatMessage?
     @State private var editing: ChatMessage?
@@ -750,9 +753,7 @@ struct ChatView: View {
                                         }.buttonStyle(.plain)
                                     }
                                     if message.deleted != 0 || !message.body.isEmpty {
-                                        Text(message.deleted != 0 ? "Сообщение удалено" : message.body)
-                                        .foregroundStyle(message.deleted != 0 ? muted : white)
-                                        .font(.system(size:17))
+                                        ExpressiveMessageBody(message:message)
                                     }
                                     HStack(spacing:6) {
                                         if message.edited_at != nil { Text("изм.") }
@@ -760,13 +761,13 @@ struct ChatView: View {
                                     }.font(.system(size:10)).foregroundStyle(muted)
                                     if !message.reactions.isEmpty {
                                         HStack { ForEach(message.reactions) { reaction in
-                                            Text("\(reaction.emoji) \(reaction.count)").font(.caption)
+                                            Text("\(reaction.emoji) \(reaction.count)").font(.caption).contentTransition(.numericText())
                                                 .padding(5).background(.white.opacity(0.1),in:Capsule())
                                         } }
                                     }
                                 }
                                 .padding(message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true ? 0 : 11)
-                                .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) ? Color.clear : (message.sender_id == store.me?.id ? Color(red:0.25,green:0.22,blue:0.34) : Color(red:0.17,green:0.14,blue:0.21)),in:RoundedRectangle(cornerRadius:20))
+                                .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) || (message.deleted==0 && (message.visual=="sticker" || NightwellSticker.isEmoji(message.body))) ? Color.clear : (message.sender_id == store.me?.id ? Color(red:0.25,green:0.22,blue:0.34) : Color(red:0.17,green:0.14,blue:0.21)),in:RoundedRectangle(cornerRadius:20))
                                 .overlay {if heartMessage==message.id {Image(systemName:"heart.fill").font(.system(size:42)).foregroundStyle(.pink).shadow(color:.pink.opacity(0.4),radius:12).transition(.scale.combined(with:.opacity)).allowsHitTesting(false)}}
                                 .onTapGesture(count:2){guard message.deleted==0 else{return};Task{await quickHeart(message.id)}}
                                 .contextMenu {
@@ -784,7 +785,7 @@ struct ChatView: View {
                                     }
                                 }
                                 if message.sender_id != store.me?.id { Spacer(minLength:45) }
-                            }.id(message.id)
+                            }.id(message.id).transition(.asymmetric(insertion:.move(edge:message.sender_id==store.me?.id ? .trailing:.leading).combined(with:.opacity),removal:.opacity))
                         }
                         Color.clear.frame(height:1).id("latest").onAppear{nearLatest=true;newMessages=false}.onDisappear{nearLatest=false}
                     }.padding(.horizontal,8).padding(.top,6).padding(.bottom,8)
@@ -810,7 +811,7 @@ struct ChatView: View {
                 HStack(spacing:8) { ProgressView().tint(.white); Text("Загрузка медиа…").font(.caption) }
                     .padding(.horizontal,16).padding(.top,6)
             }
-            if emojiPicker {HStack{ForEach(["😀","❤️","👍","🔥","😂","🎉","🤍"],id:\.self){emoji in Button(emoji){draft += emoji}.font(.system(size:25))}}.padding(10).modifier(ReferenceGlass()).padding(.horizontal,16)}
+
             HStack(alignment:.bottom,spacing:7) {
                 Menu {
                     Button("Фото",systemImage:"photo") { showingPhotoPicker=true }
@@ -888,6 +889,7 @@ struct ChatView: View {
         .foregroundStyle(.white)
         .fullScreenCover(isPresented:$showProfile){ReferenceGroupProfile(chat:chat){dismiss()}}
         .sheet(isPresented:$showingCall){if let callURL {SafariCallView(url:callURL)}}
+        .sheet(isPresented:$emojiPicker){ExpressivePicker(busy:sending,insertEmoji:{draft += $0;emojiPicker=false},sendSticker:{sticker in Task{await sendSticker(sticker)}})}
         .overlay { if showingVideoRecorder {
             VideoCircleRecorder(onVideo: { url in
                 Task {
@@ -958,7 +960,7 @@ struct ChatView: View {
                 let firstLoad=messages.isEmpty
                 var merged=Dictionary(uniqueKeysWithValues:messages.map{($0.id,$0)})
                 for message in data {merged[message.id]=message}
-                messages=merged.values.sorted{$0.id<$1.id}
+                withAnimation(firstLoad ? nil:chatAnimation){messages=merged.values.sorted{$0.id<$1.id}}
                 if firstLoad {older=data.count>=50}
                 let pinnedID=UserDefaults.standard.integer(forKey:"pinned-\(store.me?.id ?? 0)-\(chat.id)")
                 pinnedMessage=messages.first{$0.id==pinnedID && $0.deleted==0}
@@ -980,11 +982,20 @@ struct ChatView: View {
     private func quickHeart(_ id:Int) async {
         guard heartMessage==nil else{return}
         UIImpactFeedbackGenerator(style:.soft).impactOccurred()
-        withAnimation(.spring(response:0.25,dampingFraction:0.55)){heartMessage=id}
+        withAnimation(chatAnimation){heartMessage=id}
         await store.react(id,emoji:"❤️")
         await reload()
         try? await Task.sleep(for:.milliseconds(650))
-        withAnimation(.easeOut(duration:0.2)){heartMessage=nil}
+        withAnimation(chatAnimation){heartMessage=nil}
+    }
+    private func sendSticker(_ sticker:NightwellSticker) async {
+        guard !sending else{return}
+        sending=true;defer{sending=false}
+        guard let sent=await store.send(chat.id,text:sticker.emoji,reply:reply?.id,visual:"sticker") else{return}
+        emojiPicker=false;reply=nil
+        UIImpactFeedbackGenerator(style:.light).impactOccurred()
+        if !messages.contains(where:{$0.id==sent.id}) {withAnimation(chatAnimation){messages.append(sent)}}
+        await reload();await store.reloadChats()
     }
     private func submit() async {
         let text=draft.trimmingCharacters(in:.whitespacesAndNewlines)
@@ -993,7 +1004,7 @@ struct ChatView: View {
         guard let sent=await store.send(chat.id,text:text,reply:reply?.id) else{return}
         draft="";reply=nil
         UIImpactFeedbackGenerator(style:.light).impactOccurred()
-        if !messages.contains(where:{$0.id==sent.id}) {withAnimation(.easeOut(duration:0.2)){messages.append(sent)}}
+        if !messages.contains(where:{$0.id==sent.id}) {withAnimation(chatAnimation){messages.append(sent)}}
         await reload()
         await store.reloadChats()
     }
@@ -1140,7 +1151,10 @@ final class NightwellVoiceRecorder: NSObject, ObservableObject {
 
 struct AppearanceSettingsView:View {
     @AppStorage("ambientBackground") private var ambient=true
+    @AppStorage("messageAnimations") private var messageAnimations=true
     var body:some View {Form {Toggle("Светящийся фон",isOn:$ambient)
+        Toggle("Анимации сообщений и эмодзи",isOn:$messageAnimations)
+        Text("Живые эмодзи, стикеры и мягкое появление сообщений. При включённом уменьшении движения эффекты отключаются.").font(.footnote).foregroundStyle(.secondary)
         Text("Стеклянные панели используют системный Liquid Glass на iOS 26 и новее.").font(.footnote)
     }.navigationTitle("Оформление").scrollContentBackground(.hidden).background(NightwellBackground())}
 }

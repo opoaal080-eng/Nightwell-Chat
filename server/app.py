@@ -78,6 +78,8 @@ def setup():
         CREATE INDEX IF NOT EXISTS idx_calls_to ON calls(callee_id,status,expires_at);
         CREATE INDEX IF NOT EXISTS idx_calls_from ON calls(caller_id,created_at);
         """)
+        message_cols={r[1] for r in c.execute("PRAGMA table_info(messages)")}
+        if "visual" not in message_cols: c.execute("ALTER TABLE messages ADD COLUMN visual TEXT NOT NULL DEFAULT 'text'")
         call_cols={r[1] for r in c.execute("PRAGMA table_info(calls)")}
         if "answered" not in call_cols: c.execute("ALTER TABLE calls ADD COLUMN answered INTEGER NOT NULL DEFAULT -1")
         member_cols={r[1] for r in c.execute("PRAGMA table_info(members)")}
@@ -146,7 +148,10 @@ class ChatCreate(BaseModel):
     title: str = Field(min_length=1,max_length=80)
     user_ids: list[int] = Field(default_factory=list,max_length=100)
 
+STICKERS={"🔥","😎","🫶","💀","🚀","🥹","🫠","⚡️","🤝","🎉","👀","🌙"}
+
 class MessageCreate(BaseModel):
+    visual: Literal["text","sticker"] = "text"
     body: str = Field(min_length=1,max_length=4000)
     reply_to: int | None = None
 
@@ -764,11 +769,12 @@ def get_messages(chat_id:int,before:int|None=None,limit:int=Query(50,ge=1,le=100
 @app.post("/chats/{chat_id}/messages",status_code=201)
 async def send_message(chat_id:int,payload:MessageCreate,user=Depends(current)):
     if not payload.body.strip(): raise HTTPException(422,"Message cannot be blank")
+    if payload.visual=="sticker" and payload.body.strip() not in STICKERS: raise HTTPException(422,"Unknown sticker")
     with db() as c:
         member(c,chat_id,user["id"])
         if payload.reply_to and not c.execute("SELECT id FROM messages WHERE id=? AND chat_id=?",(payload.reply_to,chat_id)).fetchone():
             raise HTTPException(400,"Reply message not in chat")
-        mid=c.execute("INSERT INTO messages(chat_id,sender_id,body,reply_to) VALUES(?,?,?,?)",(chat_id,user["id"],payload.body.strip(),payload.reply_to)).lastrowid
+        mid=c.execute("INSERT INTO messages(chat_id,sender_id,body,reply_to,visual) VALUES(?,?,?,?,?)",(chat_id,user["id"],payload.body.strip(),payload.reply_to,payload.visual)).lastrowid
         msg=message_view(c,c.execute("SELECT * FROM messages WHERE id=?",(mid,)).fetchone())
         ids=members(c,chat_id)
     await notify(ids,{"type":"message","chat_id":chat_id,"message":msg})
@@ -787,10 +793,11 @@ def own_message(c,mid,uid):
 @app.patch("/messages/{message_id}")
 async def edit_message(message_id:int,payload:MessageCreate,user=Depends(current)):
     if not payload.body.strip(): raise HTTPException(422,"Message cannot be blank")
+    if payload.visual=="sticker" and payload.body.strip() not in STICKERS: raise HTTPException(422,"Unknown sticker")
     with db() as c:
         row=own_message(c,message_id,user["id"])
         if row["deleted"]: raise HTTPException(400,"Deleted message")
-        c.execute("UPDATE messages SET body=?,edited_at=CURRENT_TIMESTAMP WHERE id=?",(payload.body.strip(),message_id))
+        c.execute("UPDATE messages SET body=?,visual=?,edited_at=CURRENT_TIMESTAMP WHERE id=?",(payload.body.strip(),payload.visual,message_id))
         msg=message_view(c,c.execute("SELECT * FROM messages WHERE id=?",(message_id,)).fetchone())
         ids=members(c,row["chat_id"])
     await notify(ids,{"type":"message_updated","chat_id":row["chat_id"],"message":msg})

@@ -24,6 +24,8 @@ enum ReferencePreview {
         for i in 1...8 {
             var item:[String:Any]=["id":i,"chat_id":2,"sender_id":i%3+1,"sender_name":senders[i%3],"body":bodies[i%5]]
             item["reply_to"]=i==4 ? (2 as Any):(NSNull() as Any)
+            if i==6 {item["body"]="🔥";item["visual"]="sticker"}
+            if i==7 {item["body"]="🫶"}
             item["created_at"]="2026-11-02 00:15:00"
             item["edited_at"]=NSNull();item["deleted"]=0;item["attachment"]=NSNull()
             let reactions:[[String:Any]]=i==3 ? [["emoji":"❤️","count":2]]:[]

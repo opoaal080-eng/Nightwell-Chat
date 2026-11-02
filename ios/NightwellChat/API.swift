@@ -49,6 +49,7 @@ struct ChatMessage: Decodable, Identifiable {
     let created_at: String
     let edited_at: String?
     let deleted: Int
+    let visual:String?
     let reactions: [Reaction]
     let attachment: ChatAttachment?
 }
@@ -56,7 +57,7 @@ struct EmptyResult: Decodable { let ok: Bool }
 struct ErrorResponse: Decodable { let detail: String? }
 struct LoginPayload: Encodable { let username: String; let password: String }
 struct RegisterPayload: Encodable { let username: String; let password: String; let display_name: String }
-struct MessagePayload: Encodable { let body: String; let reply_to: Int? }
+struct MessagePayload: Encodable { let body: String; let reply_to: Int?; var visual:String = "text" }
 struct GroupPayload: Encodable { let title: String; let user_ids: [Int] }
 struct ReactionPayload: Encodable { let emoji: String }
 struct ReadPayload: Encodable { let message_id: Int }
@@ -350,8 +351,8 @@ enum NetworkError: LocalizedError {
         do { return try await request("/chats/\(chatID)/messages" + (before.map { "?before=\($0)" } ?? "")) }
         catch { alertText = error.localizedDescription; return [] }
     }
-    func send(_ chatID: Int, text: String, reply: Int? = nil) async -> ChatMessage? {
-        do { return try await request("/chats/\(chatID)/messages",method: "POST",body: MessagePayload(body: text,reply_to: reply)) }
+    func send(_ chatID: Int, text: String, reply: Int? = nil,visual:String="text") async -> ChatMessage? {
+        do { return try await request("/chats/\(chatID)/messages",method: "POST",body: MessagePayload(body: text,reply_to: reply,visual:visual)) }
         catch { alertText = error.localizedDescription; return nil }
     }
     func edit(_ messageID: Int, text: String) async {

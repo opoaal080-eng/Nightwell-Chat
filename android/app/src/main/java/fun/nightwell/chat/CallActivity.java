@@ -38,7 +38,7 @@ public final class CallActivity extends Activity {
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;
     private Uri callUri;
-    private boolean networkLost=false, ending=false, muted=false, webReady=false, micAsked=false, startIssued=false;
+    private boolean networkLost=false, ending=false, muted=false, webReady=false, micAsked=false, startIssued=false, microphoneFailure=false;
 
     private int dp(int value){return (int)(value*getResources().getDisplayMetrics().density);}
     private GradientDrawable circle(int color){
@@ -104,8 +104,15 @@ public final class CallActivity extends Activity {
         screen.addView(retry,sized(150,52));
         retry.setOnClickListener(v->{
             retry.setVisibility(View.GONE);
-            status.setText("Подключаем…");
-            webReady=false;startIssued=false;web.reload();
+            status.setText("Проверяем микрофон…");
+            if(microphoneFailure && webReady){
+                microphoneFailure=false;
+                startIssued=false;
+                tryStartAudio();
+            } else {
+                webReady=false;startIssued=false;
+                web.reload();
+            }
         });
         View space2=new View(this);
         screen.addView(space2,new LinearLayout.LayoutParams(1,0,1));
@@ -181,7 +188,7 @@ public final class CallActivity extends Activity {
                     result->{
                         if("true".equals(result)){
                             retry.setVisibility(View.GONE);
-                            webReady=true;tryStartAudio();
+                            microphoneFailure=false;webReady=true;tryStartAudio();
                         }else showError("Сервер вернул старую страницу звонка. Обнови сервер.");
                     }
                 );
@@ -222,8 +229,9 @@ public final class CallActivity extends Activity {
         if(ending||!webReady||startIssued||web==null)return;
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)return;
         startIssued=true;
-        micButton.setEnabled(true);
-        web.evaluateJavascript("window.startCallAudio && window.startCallAudio();",null);
+        // Do not enable mute until WebRTC confirms that the input source has started.
+        micButton.setEnabled(false);
+        web.evaluateJavascript("if(window.startCallAudio){void window.startCallAudio();true}else false",null);
     }
     private boolean sameOrigin(Uri uri){
         return uri!=null && callUri!=null && "https".equalsIgnoreCase(uri.getScheme()) &&
@@ -266,7 +274,21 @@ public final class CallActivity extends Activity {
                 runOnUiThread(()->{
                     if(ending)return;
                     if("ended".equals(type)){ending=true;finish();}
-                    else if("state".equals(type)){status.setText(message);}
+                    else if("microphone_ready".equals(type)){
+                        microphoneFailure=false;
+                        micButton.setEnabled(true);
+                        retry.setVisibility(View.GONE);
+                    }
+                    else if("microphone_error".equals(type)){
+                        android.util.Log.w("NightwellCall","WebRTC microphone: "+event.optString("code","unknown"));
+                        startIssued=false;
+                        microphoneFailure=true;
+                        micButton.setEnabled(false);
+                        showError(message);
+                    }
+                    else if("state".equals(type)){
+                        if(!microphoneFailure)status.setText(message);
+                    }
                     else if("mute".equals(type)){
                         muted="on".equals(message);
                         micButton.setText(muted?"🎙 Включить":"🎙 Микрофон");

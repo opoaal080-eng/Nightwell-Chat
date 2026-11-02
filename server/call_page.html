@@ -11,7 +11,7 @@ function renderMute(){mute.textContent=muted?'Включить микрофон'
 function setMuted(value){if(!stream||finished)return false;muted=!!value;stream.getAudioTracks().forEach(track=>{track.enabled=!muted});renderMute();nativeEvent('mute',muted?'on':'off');return true}
 window.setCallMuted=setMuted;
 mute.onclick=()=>{if(setMuted(!muted))text(muted?'Микрофон выключен':'Микрофон включён')};
-function nativeEvent(type,message=''){try{window.webkit?.messageHandlers?.nightwellCall?.postMessage({type,message});}catch(e){}try{window.NightwellBridge?.postMessage(JSON.stringify({type,message}));}catch(e){}}
+function nativeEvent(type,message='',code=''){try{window.webkit?.messageHandlers?.nightwellCall?.postMessage({type,message,code});}catch(e){}try{window.NightwellBridge?.postMessage(JSON.stringify({type,message,code}));}catch(e){}}
 function text(msg){status.textContent=msg;nativeEvent('state',msg)}
 function resetPeer(){pendingOffer=null;pendingIce=[];if(peer){peer.onicecandidate=null;peer.ontrack=null;peer.onconnectionstatechange=null;peer.close();peer=null}audio.srcObject=null;offered=false;restarting=false}
 function send(kind,data){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:kind,data:data||null}))}
@@ -23,7 +23,7 @@ function closeCall(remote=false){
  start.disabled=true;mute.disabled=true;text('Звонок завершён');nativeEvent('ended',remote?'remote':'local');
 }
 window.closeCall=closeCall;
-hang.onclick=closeCall;
+hang.onclick=()=>closeCall(false);
 async function restartIce(){
  if(finished||!peer||!ready||restarting)return;
  if(peer.signalingState!=='stable')return;
@@ -85,12 +85,52 @@ async function ensurePeer(){
  if(stream)stream.getTracks().forEach(track=>peer.addTrack(track,stream));
 }
 async function negotiate(){if(finished||!stream||!ready)return;await ensurePeer();if(role==='caller'&&!offered){offered=true;const offer=await peer.createOffer();await peer.setLocalDescription(offer);send('offer',peer.localDescription)}else{text('Устанавливаем соединение…')}}
+function microphoneErrorMessage(err){
+ const name=err&&err.name||'UnknownError';
+ if(name==='NotAllowedError'||name==='PermissionDeniedError'||name==='SecurityError')
+  return 'Нет доступа к микрофону. Разреши его в настройках Nightwell Chat.';
+ if(name==='NotFoundError'||name==='DevicesNotFoundError')
+  return 'Микрофон не найден. Проверь устройство ввода Android или Windows.';
+ if(name==='NotReadableError'||name==='TrackStartError'||name==='AbortError'||
+    String(err&&err.message||'').includes('Could not start audio source'))
+  return 'Микрофон недоступен или занят. В BlueStacks проверь Настройки → Устройства → Микрофон, затем нажми «Повторить».';
+ if(name==='OverconstrainedError')
+  return 'Микрофон не поддерживает параметры записи. Попробуй другое устройство ввода.';
+ return 'Ошибка микрофона ('+name+'): '+String(err&&err.message||'неизвестная причина');
+}
 async function startAudio(){
- if(starting||stream||finished)return;
+ if(starting||stream||finished)return false;
  starting=true;
- if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){starting=false;text('Микрофон недоступен в этом браузере');return}
- start.disabled=true;try{const acquired=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false});if(finished){acquired.getTracks().forEach(t=>t.stop());return}stream=acquired;mute.disabled=false;muted=false;renderMute();text('Микрофон активен. Соединяем…');if(pendingOffer){const offer=pendingOffer;pendingOffer=null;await answerOffer(offer)}else{await negotiate()}}catch(err){if(!finished){start.disabled=false;text('Разреши доступ к микрофону: '+err.message)}}
- finally{starting=false}
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+  starting=false;
+  const message='Этот WebView не поддерживает захват микрофона.';
+  text(message);nativeEvent('microphone_error',message,'UnsupportedError');
+  return false;
+ }
+ start.disabled=true;
+ try{
+  const acquired=await navigator.mediaDevices.getUserMedia({
+   audio:{echoCancellation:true,noiseSuppression:true},video:false
+  });
+  if(finished){acquired.getTracks().forEach(t=>t.stop());return false}
+  stream=acquired;
+  mute.disabled=false;muted=false;renderMute();
+  nativeEvent('microphone_ready','Микрофон включён');
+  text('Микрофон активен. Соединяем…');
+  if(pendingOffer){const offer=pendingOffer;pendingOffer=null;await answerOffer(offer)}
+  else await negotiate();
+  return true;
+ }catch(err){
+  if(!finished){
+   if(stream){stream.getTracks().forEach(track=>track.stop());stream=null}
+   resetPeer();
+   start.disabled=false;mute.disabled=true;
+   const message=microphoneErrorMessage(err);
+   text(message);
+   nativeEvent('microphone_error',message,err&&err.name||'UnknownError');
+  }
+  return false;
+ }finally{starting=false}
 }
 window.startCallAudio=startAudio;
 start.onclick=startAudio;

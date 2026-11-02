@@ -738,6 +738,7 @@ struct ChatView: View {
     @State private var audioEndObserver:NSObjectProtocol?
     @State private var showingCall=false
     @State private var callURL:URL?
+    @State private var showingContactProfile=false
     var body: some View {
         VStack(spacing:0) {
             ScrollViewReader { proxy in
@@ -921,7 +922,50 @@ struct ChatView: View {
         .background(NightwellBackground())
         .navigationTitle(chat.title)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented:$showingContactProfile) {
+            NavigationStack {
+                ScrollView {
+                    VStack(spacing:16) {
+                        if let person=chat.other_user {
+                            AvatarCircle(person:person,fallback:chat.title)
+                                .frame(width:104,height:104)
+                            Text(person.display_name).font(.title2.bold())
+                            Text("@"+person.username).foregroundStyle(.secondary)
+                        } else {
+                            Text(chat.title).font(.title2.bold())
+                        }
+                        Button("Вернуться в переписку") { showingContactProfile=false }
+                            .buttonStyle(.borderedProminent)
+                    }.frame(maxWidth:.infinity).padding(24)
+                }
+                .background(NightwellBackground())
+                .navigationTitle("Профиль")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement:.topBarLeading) {
+                        Button { showingContactProfile=false } label: {
+                            Label("Назад",systemImage:"chevron.left")
+                        }
+                    }
+                    ToolbarItem(placement:.topBarTrailing) {
+                        Button("Готово") { showingContactProfile=false }
+                    }
+                }
+            }
+        }
         .toolbar {
+            ToolbarItem(placement:.principal) {
+                Button { showingContactProfile=true } label: {
+                    HStack(spacing:7) {
+                        if let person=chat.other_user {
+                            AvatarCircle(person:person,fallback:chat.title)
+                                .frame(width:30,height:30)
+                        }
+                        Text(chat.title).font(.headline).lineLimit(1)
+                    }
+                }.buttonStyle(.plain)
+                .accessibilityLabel("Открыть профиль собеседника")
+            }
             ToolbarItem(placement:.topBarTrailing){
                 if let person=chat.other_user {
                     Button {

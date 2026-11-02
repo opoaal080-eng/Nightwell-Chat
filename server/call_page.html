@@ -4,10 +4,10 @@
 'use strict';
 const cid='__CALL_ID__';const fragment=new URLSearchParams(location.hash.substring(1));const ticket=fragment.get('ticket')||'';
 const status=document.getElementById('state'),start=document.getElementById('start'),hang=document.getElementById('hang'),audio=document.getElementById('remote');
-let ws,peer,stream,role,ready=false,offered=false,finished=false,restarting=false;
+let ws,peer,stream,role,ready=false,offered=false,finished=false,restarting=false,reconnectTimer=null,reconnectAttempts=0;
 function text(msg){status.textContent=msg}
 function send(kind,data){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:kind,data:data||null}))}
-function closeCall(){finished=true;send('hangup');if(stream)stream.getTracks().forEach(t=>t.stop());if(peer)peer.close();if(ws)ws.close();start.disabled=true;text('Звонок завершён')}
+function closeCall(){finished=true;if(reconnectTimer)clearTimeout(reconnectTimer);send('hangup');if(stream)stream.getTracks().forEach(t=>t.stop());if(peer)peer.close();if(ws)ws.close();start.disabled=true;text('Звонок завершён')}
 hang.onclick=closeCall;
 async function restartIce(){
  if(finished||!peer||!ready||restarting)return;
@@ -26,13 +26,20 @@ window.restartIce=restartIce;
 async function connect(){
  if(!ticket){text('Нет разрешения на звонок');start.disabled=true;return}
  ws=new WebSocket(location.origin.replace(/^http/,'ws')+'/calls/'+cid+'/signal?ticket='+encodeURIComponent(ticket));
- ws.onclose=()=>{if(!finished)text('Связь прервана. Закрой окно и попробуй снова')};
+ ws.onclose=()=>{
+  if(finished)return;
+  ready=false;
+  text('Сигнальное соединение потеряно. Переподключаемся…');
+  if(reconnectAttempts>=6){text('Не удалось восстановить связь. Попробуй позвонить снова');return}
+  const delay=Math.min(1000*Math.pow(2,reconnectAttempts++),10000);
+  reconnectTimer=setTimeout(connect,delay);
+ };
  ws.onerror=()=>text('Не удалось подключиться к звонку');
  ws.onmessage=async e=>{
   const msg=JSON.parse(e.data);
   try {
-   if(msg.type==='connected'){role=msg.role;text(role==='caller'?'Ожидание ответа…':'Соединение…');return}
-   if(msg.type==='peer_ready'){ready=true;await negotiate();return}
+   if(msg.type==='connected'){role=msg.role;reconnectAttempts=0;text(role==='caller'?'Ожидание ответа…':'Соединение…');return}
+   if(msg.type==='peer_ready'){ready=true;if(peer&&peer.connectionState==='failed')await restartIce();else await negotiate();return}
    if(msg.type==='peer_left'){ready=false;offered=false;text('Собеседник отключился');return}
    if(msg.type==='ended'){closeCall();return}
    if(msg.type==='offer'){await ensurePeer();await peer.setRemoteDescription(msg.data);let answer=await peer.createAnswer();await peer.setLocalDescription(answer);send('answer',peer.localDescription);return}

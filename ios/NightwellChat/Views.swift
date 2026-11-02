@@ -173,103 +173,247 @@ struct InboxView: View {
     @State private var settings = false
     @State private var calls = false
     @State private var selected: Conversation?
-    @State private var chatFilter=0
+    @State private var chatFilter = 0
+    @State private var query = ""
+    @State private var editing = false
+    @State private var checked: Set<Int> = []
+    private let accent = Color(red:0.34,green:0.50,blue:0.94)
+
+    private var filteredChats: [Conversation] {
+        let term = query.trimmingCharacters(in:.whitespacesAndNewlines)
+        return store.chats.filter {
+            (chatFilter == 0 || $0.kind != "group") &&
+            (term.isEmpty || $0.title.localizedCaseInsensitiveContains(term) ||
+             ($0.other_user?.username.localizedCaseInsensitiveContains(term) ?? false) ||
+             ($0.last_message?.body.localizedCaseInsensitiveContains(term) ?? false))
+        }
+    }
+
     var body: some View {
         NavigationStack {
-            ZStack {
-                NightwellBackground()
-                if store.chats.isEmpty {
-                    ContentUnavailableView("Пока нет переписок",systemImage:"bubble.left.and.bubble.right",description:Text("Найди пользователя и начни общение"))
-                } else {
-                    List(store.chats.filter {chatFilter == 0 || $0.kind != "group"}) { chat in
-                        Button { selected=chat } label: {
-                            HStack(spacing:13) {
-                                AvatarCircle(person:chat.other_user,fallback:chat.title)
-                                VStack(alignment:.leading,spacing:5) {
-                                    HStack {
-                                        Text(chat.title).font(.headline).foregroundStyle(.white)
-                                        Spacer()
-                                        if chat.unread > 0 { Text("\(chat.unread)").font(.caption.bold()).foregroundStyle(.black)
-                                            .padding(.horizontal,8).padding(.vertical,4).background(.white,in:Capsule()) }
-                                    }
-                                    Text(chat.last_message?.body ?? (chat.kind == "group" ? "Новая группа" : "Новый чат"))
-                                        .font(.subheadline).foregroundStyle(muted).lineLimit(1)
-                                }
-                            }.padding(.vertical,6)
-                        }.listRowBackground(Color.white.opacity(0.045))
-                    }.scrollContentBackground(.hidden)
-                }
+            ScrollView {
+                LazyVStack(spacing:0) {
+                    if filteredChats.isEmpty {
+                        ContentUnavailableView(query.isEmpty ? "Пока нет переписок" : "Ничего не найдено",
+                            systemImage:"bubble.left.and.bubble.right",
+                            description:Text(query.isEmpty ? "Найди пользователя и начни общение" : "Попробуй другое имя или текст"))
+                            .padding(.top,36)
+                    }
+                    ForEach(filteredChats) { chat in
+                        Button {
+                            if editing {
+                                if checked.contains(chat.id) { checked.remove(chat.id) }
+                                else { checked.insert(chat.id) }
+                            } else { selected = chat }
+                        } label: { inboxRow(chat) }
+                        .buttonStyle(.plain)
+                        Rectangle().fill(Color.white.opacity(0.09)).frame(height:0.5)
+                            .padding(.leading,70)
+                    }
+                }.padding(.horizontal,16)
             }
+            .background(Color.black.ignoresSafeArea())
+            .scrollDismissesKeyboard(.interactively)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden,for:.navigationBar)
-            .safeAreaInset(edge:.top,spacing:0) {
-                VStack(spacing:12) {
-                    HStack(spacing:12) {
-                        Button {settings=true} label:{
-                            Image(systemName:"line.3.horizontal")
-                                .font(.system(size:20,weight:.medium))
-                                .frame(width:44,height:44)
-                                .background(.ultraThinMaterial,in:Circle())
-                        }
-                        Spacer()
-                        Text("Чаты").font(.system(size:22,weight:.semibold,design:.rounded))
-                        Spacer()
-                        Button {group=true} label:{
-                            Image(systemName:"person.2.badge.plus")
-                                .font(.system(size:19)).frame(width:44,height:44)
-                                .background(.ultraThinMaterial,in:Circle())
-                        }
-                        Button {findPeople=true} label:{
-                            Image(systemName:"square.and.pencil")
-                                .font(.system(size:19)).frame(width:44,height:44)
-                                .background(glassBlue.opacity(0.72),in:Circle())
-                        }
-                    }
-                    HStack(spacing:4) {
-                        Button {withAnimation(.easeInOut(duration:0.2)){chatFilter=0}} label:{
-                            Text("Все").frame(maxWidth:.infinity).padding(.vertical,10)
-                                .background(chatFilter == 0 ? .white.opacity(0.19) : .clear,in:Capsule())
-                        }
-                        Button {withAnimation(.easeInOut(duration:0.2)){chatFilter=1}} label:{
-                            Text("Личные").frame(maxWidth:.infinity).padding(.vertical,10)
-                                .background(chatFilter == 1 ? .white.opacity(0.19) : .clear,in:Capsule())
-                        }
-                    }
-                    .font(.system(size:14,weight:.semibold))
-                    .padding(4).background(.ultraThinMaterial,in:Capsule())
-                    .overlay(Capsule().stroke(.white.opacity(0.15)))
-                }
-                .padding(.horizontal,16).padding(.top,10).padding(.bottom,12)
-                .background(.ultraThinMaterial)
-            }
-            .safeAreaInset(edge:.bottom,spacing:0) {
-                HStack(spacing:0) {
-                    Button {findPeople=true} label:{Image(systemName:"person.crop.circle")}
-                    Button {calls=true} label:{Image(systemName:"phone")}
-                    Image(systemName:"bubble.left.and.bubble.right.fill")
-                        .foregroundStyle(glassBlue)
-                        .frame(maxWidth:.infinity)
-                    Button {settings=true} label:{Image(systemName:"gearshape")}
-                }
-                .font(.system(size:23,weight:.regular))
-                .buttonStyle(.plain)
-                .frame(maxWidth:.infinity)
-                .frame(height:54)
-                .padding(.horizontal,12)
-                .background(.ultraThinMaterial,in:Capsule())
-                .overlay(Capsule().stroke(LinearGradient(colors:[.white.opacity(0.35),.white.opacity(0.05)],startPoint:.top,endPoint:.bottom),lineWidth:1))
-                .shadow(color:.black.opacity(0.3),radius:18,y:8)
-                .padding(.horizontal,24).padding(.bottom,3)
-            }
-            .navigationDestination(item:$selected) { ChatView(chat:$0) }
+            .safeAreaInset(edge:.top,spacing:0) { inboxHeader }
+            .safeAreaInset(edge:.bottom,spacing:0) { inboxDock }
+            .navigationDestination(item:$selected) { ChatView(chat:$0).toolbar(.visible,for:.navigationBar) }
             .sheet(isPresented:$findPeople) { PeopleView { chat in findPeople=false; selected=chat } }
             .sheet(isPresented:$group) { GroupView { chat in group=false; selected=chat } }
             .sheet(isPresented:$settings) { SettingsView() }
-            .sheet(isPresented:$calls){IncomingCallsView()}
+            .sheet(isPresented:$calls) { IncomingCallsView() }
             .refreshable { await store.reloadChats() }
             .task { await store.reloadChats() }
             .onChange(of:store.eventVersion) { _,_ in Task { await store.reloadChats() } }
         }
+    }
+
+    private var inboxHeader: some View {
+        VStack(spacing:10) {
+            ZStack {
+                Text("Чаты").font(.system(size:17,weight:.semibold))
+                HStack(spacing:12) {
+                    Button {
+                        withAnimation(.easeInOut(duration:0.2)) { editing.toggle(); checked.removeAll() }
+                    } label: {
+                        Text(editing ? "Готово" : "Изм.")
+                            .font(.system(size:17,weight:.semibold))
+                            .padding(.horizontal,15).frame(height:44)
+                            .background(Color(white:0.12),in:Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.12)))
+                    }
+                    Spacer()
+                    Button { group=true } label: {
+                        Image(systemName:"plus.circle.dashed").font(.system(size:23))
+                            .frame(width:44,height:44)
+                            .background(Color(white:0.12),in:Circle())
+                            .overlay(Circle().stroke(Color.white.opacity(0.12)))
+                    }.accessibilityLabel("Создать группу")
+                    Button { findPeople=true } label: {
+                        Image(systemName:"square.and.pencil").font(.system(size:23))
+                            .frame(width:44,height:44).background(accent,in:Circle())
+                            .overlay(Circle().stroke(Color.white.opacity(0.2)))
+                    }.accessibilityLabel("Новый чат")
+                }
+            }.padding(.bottom,1)
+            HStack(spacing:0) {
+                filterButton("Все",index:0)
+                filterButton("Personal",index:1)
+            }
+            .padding(3).background(Color(white:0.12),in:Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.18)))
+            HStack(spacing:10) {
+                Image(systemName:"magnifyingglass").font(.system(size:20)).foregroundStyle(Color.gray)
+                TextField("Поиск чатов",text:$query)
+                    .font(.system(size:17)).textInputAutocapitalization(.never).autocorrectionDisabled()
+                if !query.isEmpty {
+                    Button { query="" } label: { Image(systemName:"xmark.circle.fill").foregroundStyle(.gray) }
+                        .accessibilityLabel("Очистить поиск")
+                }
+            }.padding(.horizontal,12).frame(height:42)
+                .background(Color(white:0.095),in:Capsule())
+            if editing {
+                Button("Прочитать выбранные (\(checked.count))") {
+                    let ids = checked
+                    Task {
+                        for chat in store.chats where ids.contains(chat.id) {
+                            if let last = chat.last_message {
+                                await store.markRead(chatID:chat.id,messageID:last.id)
+                            }
+                        }
+                        await store.reloadChats()
+                        checked.removeAll()
+                        editing=false
+                    }
+                }.font(.subheadline).disabled(checked.isEmpty).padding(.vertical,4)
+            }
+        }
+        .foregroundStyle(.white).buttonStyle(.plain)
+        .padding(.horizontal,16).padding(.top,10).padding(.bottom,4)
+        .background(Color.black)
+    }
+
+    private func filterButton(_ title:String,index:Int) -> some View {
+        Button { withAnimation(.easeInOut(duration:0.2)) { chatFilter=index } } label: {
+            Text(title).font(.system(size:17,weight:.medium))
+                .frame(maxWidth:.infinity).frame(height:38)
+                .background(chatFilter == index ? Color(white:0.27) : Color.clear,in:Capsule())
+        }
+    }
+
+    private func inboxRow(_ chat:Conversation) -> some View {
+        HStack(alignment:.top,spacing:10) {
+            if editing {
+                Image(systemName:checked.contains(chat.id) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(accent).padding(.top,20)
+            }
+            InboxAvatar(person:chat.other_user,title:chat.title)
+            VStack(alignment:.leading,spacing:3) {
+                HStack(alignment:.firstTextBaseline) {
+                    Text(chat.title).font(.system(size:18,weight:.semibold)).lineLimit(1)
+                    Spacer(minLength:8)
+                    Text(inboxDate(chat.last_message?.created_at))
+                        .font(.system(size:13)).foregroundStyle(Color(white:0.53))
+                }
+                HStack(alignment:.top) {
+                    Text(preview(chat)).font(.system(size:17))
+                        .foregroundStyle(Color(white:0.53)).lineLimit(1)
+                    Spacer(minLength:4)
+                    if chat.unread > 0 {
+                        Text("\(chat.unread)").font(.system(size:12,weight:.semibold))
+                            .padding(.horizontal,7).padding(.vertical,2)
+                            .background(accent,in:Capsule())
+                    }
+                }
+            }.padding(.top,1)
+        }.foregroundStyle(.white).padding(.vertical,8)
+            .frame(maxWidth:.infinity,minHeight:76,alignment:.topLeading)
+            .contentShape(Rectangle())
+    }
+
+    private func preview(_ chat:Conversation) -> String {
+        guard let last=chat.last_message else { return chat.kind == "group" ? "Новая группа" : "Новый чат" }
+        return last.body.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ? "Вложение" : last.body
+    }
+
+    private func inboxDate(_ raw:String?) -> String {
+        guard let raw else { return "" }
+        let iso=ISO8601DateFormatter()
+        iso.formatOptions=[.withInternetDateTime,.withFractionalSeconds]
+        var date=iso.date(from:raw)
+        if date == nil {
+            iso.formatOptions=[.withInternetDateTime]
+            date=iso.date(from:raw)
+        }
+        if date == nil {
+            let sql=DateFormatter()
+            sql.locale=Locale(identifier:"en_US_POSIX")
+            sql.timeZone=TimeZone(secondsFromGMT:0)
+            for format in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSS","yyyy-MM-dd'T'HH:mm:ss","yyyy-MM-dd HH:mm:ss"] {
+                sql.dateFormat=format
+                if let parsed=sql.date(from:raw) { date=parsed; break }
+            }
+        }
+        guard let date else { return "" }
+        let formatter=DateFormatter()
+        formatter.locale=Locale(identifier:"ru_RU")
+        formatter.dateFormat="dd.MM"
+        return formatter.string(from:date)
+    }
+
+    private var inboxDock: some View {
+        HStack(spacing:0) {
+            dockButton("Контакты",icon:"person.crop.circle.fill",active:false) { findPeople=true }
+            dockButton("Звонки",icon:"phone.fill",active:false) { calls=true }
+            dockButton("Чаты",icon:"bubble.left.and.bubble.right.fill",active:true) { }
+            dockButton("Настройки",icon:"gearshape",active:false) { settings=true }
+        }.padding(4).background(Color(white:0.12),in:Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.16)))
+            .padding(.horizontal,20).padding(.top,6).padding(.bottom,5)
+            .background(Color.black)
+    }
+
+    private func dockButton(_ title:String,icon:String,active:Bool,action:@escaping () -> Void) -> some View {
+        Button(action:action) {
+            VStack(spacing:4) {
+                Image(systemName:icon).font(.system(size:27,weight:.medium)).frame(height:31)
+                Text(title).font(.system(size:11,weight:.medium)).lineLimit(1).minimumScaleFactor(0.75)
+            }.foregroundStyle(active ? accent : Color.white)
+                .frame(maxWidth:.infinity).frame(height:56)
+                .background(active ? Color(white:0.23) : Color.clear,in:Capsule())
+                .contentShape(Capsule())
+        }.buttonStyle(.plain)
+            .accessibilityAddTraits(active ? .isSelected : [])
+    }
+}
+
+private struct InboxAvatar: View {
+    @EnvironmentObject var store: ChatStore
+    let person:Person?
+    let title:String
+    @State private var image:UIImage?
+    private var avatarColor: Color {
+        let palette:[Color] = [.orange,.purple,.cyan,.pink,.green,.blue]
+        let seed=title.unicodeScalars.reduce(0) { ($0 + Int($1.value)) % 997 }
+        return palette[seed % palette.count]
+    }
+    var body: some View {
+        ZStack {
+            Circle().fill(LinearGradient(colors:[avatarColor.opacity(0.65),avatarColor],
+                                         startPoint:.top,endPoint:.bottom))
+            if let image {
+                Image(uiImage:image).resizable().scaledToFill()
+            } else {
+                Text(String(title.prefix(1))).font(.system(size:29,weight:.medium)).foregroundStyle(.white)
+            }
+        }.frame(width:60,height:60).clipShape(Circle())
+            .task(id:"\(person?.id ?? 0)-\(person?.has_avatar ?? false)-\(store.eventVersion)") {
+                image=nil
+                if let person,person.has_avatar == true,let bytes=await store.loadAvatar(person.id) {
+                    image=UIImage(data:bytes)
+                }
+            }
     }
 }
 

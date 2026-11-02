@@ -45,6 +45,12 @@ public final class CallActivity extends Activity {
         web.getSettings().setAllowContentAccess(false);
         web.getSettings().setMediaPlaybackRequiresUserGesture(false);
         web.setWebViewClient(new WebViewClient(){
+            @Override public void onPageFinished(WebView view,String url){
+                super.onPageFinished(view,url);
+                if(url.startsWith("https://chat.nightwell.fun/calls/")&&!ending){
+                    view.evaluateJavascript("document.visibilityState",ignored->{});
+                }
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){
                 String url=request.getUrl().toString();
                 return !url.startsWith("https://chat.nightwell.fun/calls/");

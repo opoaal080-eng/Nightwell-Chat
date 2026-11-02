@@ -6,6 +6,7 @@ import SafariServices
 import WebKit
 import ContactsUI
 import Contacts
+import AVFoundation
 
 struct PhoneContactPicker: UIViewControllerRepresentable {
     var select: (String) -> Void
@@ -174,100 +175,157 @@ struct CallPresentation: Identifiable {
     let url: URL
 }
 
+
+@MainActor
 final class CallPageState: ObservableObject {
     @Published var loading = true
     @Published var failure: String?
     @Published var closing = false
+    @Published var ended = false
+    @Published var status = "Подключаем…"
+    @Published var muted = false
+    var microphoneAllowed = false
+    var webReady = false
+    var started = false
     weak var webView: WKWebView?
     var timeout: DispatchWorkItem?
+
     func fail(_ message:String) {
         timeout?.cancel()
-        loading=false
-        failure=message
+        loading = false
+        failure = message
     }
     func finishLoading() {
         timeout?.cancel()
-        loading=false
-        failure=nil
+        webReady = true
+        loading = false
+        failure = nil
+        startAudioIfReady()
+    }
+    func startAudioIfReady() {
+        guard webReady, microphoneAllowed, !started, !ended else {return}
+        started = true
+        webView?.evaluateJavaScript("window.startCallAudio && window.startCallAudio();") { _, error in
+            if let error {self.started=false;self.fail("Не удалось включить микрофон: \(error.localizedDescription)")}
+        }
+    }
+    func toggleMute() {
+        guard started, !ended else {return}
+        muted.toggle()
+        let flag = muted ? "true" : "false"
+        webView?.evaluateJavaScript("window.setCallMuted && window.setCallMuted(\(flag));") { _,_ in }
     }
     func end(_ completion:@escaping () -> Void) {
         guard !closing else { return }
-        closing=true
+        closing = true
         timeout?.cancel()
-        var completed=false
+        var completed = false
         let finish = {
             guard !completed else { return }
-            completed=true
+            completed = true
             completion()
         }
         guard let webView else { finish(); return }
-        webView.evaluateJavaScript("if (typeof closeCall === 'function') closeCall();") { _,_ in finish() }
+        webView.evaluateJavaScript("if(typeof closeCall === 'function') closeCall();") { _,_ in finish() }
         DispatchQueue.main.asyncAfter(deadline:.now()+1,execute:finish)
     }
 }
 
 struct CallScreen: View {
     let url:URL
+    @EnvironmentObject private var store:ChatStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var page=CallPageState()
     @State private var attempt=0
+
+    private var callID:String {
+        let parts=url.pathComponents
+        return parts.count>=3 ? parts[parts.count-2] : ""
+    }
+
     var body:some View {
-        VStack(spacing:0) {
-            HStack {
-                Label("Звонок",systemImage:"phone.fill").font(.headline)
+        ZStack {
+            Color.black.ignoresSafeArea()
+            // WebKit handles WebRTC audio; all visible controls are native SwiftUI.
+            SafariCallView(url:url,page:page).id(attempt)
+                .frame(width:250,height:200).opacity(0.015)
+                .allowsHitTesting(false).accessibilityHidden(true)
+            VStack(spacing:22) {
+                Text("NIGHTWELL CHAT").tracking(4).font(.system(size:13,weight:.semibold))
+                    .foregroundStyle(.gray).padding(.top,45)
                 Spacer()
-                Button(page.closing ? "Завершаем…" : "Завершить") { page.end { dismiss() } }
-                    .tint(.red).disabled(page.closing)
-            }.padding(18).background(Color(white:0.10))
-            ZStack {
-                Color.black
-                SafariCallView(url:url,page:page).id(attempt)
-                if page.loading {
-                    VStack(spacing:16) {
-                        ProgressView().tint(.white)
-                        Text("Открываем звонок…")
-                    }.frame(maxWidth:.infinity,maxHeight:.infinity).background(Color.black)
+                Image(systemName:"person.crop.circle.fill").font(.system(size:120))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white,Color(white:0.17))
+                Text("Голосовой звонок").font(.system(size:28,weight:.semibold))
+                Text(page.failure ?? page.status).foregroundStyle(.gray)
+                    .font(.system(size:16)).multilineTextAlignment(.center).padding(.horizontal,20)
+                if page.loading {ProgressView().tint(.white)}
+                if page.failure != nil {
+                    Button("Повторить") {
+                        page.failure=nil;page.loading=true;page.webReady=false;page.started=false
+                        attempt += 1
+                    }.buttonStyle(.borderedProminent)
                 }
-                if let failure=page.failure {
-                    VStack(spacing:18) {
-                        Image(systemName:"phone.badge.exclamationmark").font(.largeTitle)
-                        Text(failure).multilineTextAlignment(.center)
-                        Button("Повторить") {
-                            page.failure=nil
-                            page.loading=true
-                            attempt += 1
-                        }.buttonStyle(.borderedProminent)
-                    }.padding(28).frame(maxWidth:.infinity,maxHeight:.infinity).background(Color.black)
-                }
+                Spacer()
+                HStack(spacing:50) {
+                    Button {
+                        page.toggleMute()
+                    } label:{
+                        VStack(spacing:10) {
+                            Image(systemName:page.muted ? "mic.slash.fill" : "mic.fill")
+                                .font(.system(size:27)).frame(width:72,height:72)
+                                .background(Color(white:0.22),in:Circle())
+                            Text(page.muted ? "Включить" : "Микрофон").font(.caption)
+                        }
+                    }.disabled(!page.started || page.ended)
+                    Button {page.end {dismiss()}} label:{
+                        VStack(spacing:10) {
+                            Image(systemName:"phone.down.fill").font(.system(size:29))
+                                .frame(width:72,height:72).background(.red,in:Circle())
+                            Text("Завершить").font(.caption)
+                        }
+                    }.disabled(page.closing)
+                }.buttonStyle(.plain).foregroundStyle(.white).padding(.bottom,62)
+            }.frame(maxWidth:.infinity,maxHeight:.infinity)
+        }
+        .interactiveDismissDisabled()
+        .onChange(of:page.ended) {_,value in if value {dismiss()}}
+        .onChange(of:store.endedCallID) {_,cid in if cid == callID {dismiss()}}
+        .task {
+            let allowed = await withCheckedContinuation { continuation in
+                AVAudioApplication.requestRecordPermission { granted in continuation.resume(returning:granted) }
             }
-        }.foregroundStyle(.white).background(Color.black.ignoresSafeArea())
-            .interactiveDismissDisabled()
+            page.microphoneAllowed = allowed
+            if allowed {page.startAudioIfReady()}
+            else {page.fail("Разреши микрофон Nightwell Chat в настройках iPhone")}
+        }
     }
 }
 
 struct SafariCallView:UIViewRepresentable {
     let url:URL
     @ObservedObject var page:CallPageState
-    func makeCoordinator()->Coordinator { Coordinator(url:url,page:page) }
+    func makeCoordinator()->Coordinator {Coordinator(url:url,page:page)}
     func makeUIView(context:Context)->WKWebView {
         let config=WKWebViewConfiguration()
         config.allowsInlineMediaPlayback=true
         config.mediaTypesRequiringUserActionForPlayback=[]
+        config.userContentController.add(context.coordinator,name:"nightwellCall")
         let view=WKWebView(frame:.zero,configuration:config)
         view.uiDelegate=context.coordinator
         view.navigationDelegate=context.coordinator
         view.backgroundColor = .black
         view.scrollView.backgroundColor = .black
         view.isOpaque=false
-        view.scrollView.isScrollEnabled=true
+        view.scrollView.isScrollEnabled=false
+        view.scrollView.pinchGestureRecognizer?.isEnabled=false
         page.webView=view
-        var request=URLRequest(url:url,cachePolicy:.reloadIgnoringLocalCacheData,timeoutInterval:25)
-        request.httpMethod="GET"
-        view.load(request)
+        view.load(URLRequest(url:url,cachePolicy:.reloadIgnoringLocalCacheData,timeoutInterval:25))
         let deadline=DispatchWorkItem { [weak page] in
             guard let page,page.loading else {return}
             page.webView?.stopLoading()
-            page.fail("Сервер не загрузил экран звонка. Проверь соединение и повтори.")
+            page.fail("Сервер не загрузил звонок. Проверь обновление сервера.")
         }
         page.timeout=deadline
         DispatchQueue.main.asyncAfter(deadline:.now()+30,execute:deadline)
@@ -277,29 +335,38 @@ struct SafariCallView:UIViewRepresentable {
     static func dismantleUIView(_ view:WKWebView,coordinator:Coordinator) {
         coordinator.page.timeout?.cancel()
         view.stopLoading()
+        view.configuration.userContentController.removeScriptMessageHandler(forName:"nightwellCall")
         view.loadHTMLString("",baseURL:nil)
         view.uiDelegate=nil
         view.navigationDelegate=nil
     }
-    final class Coordinator:NSObject,WKUIDelegate,WKNavigationDelegate {
+    final class Coordinator:NSObject,WKUIDelegate,WKNavigationDelegate,WKScriptMessageHandler {
         let url:URL
         let page:CallPageState
         init(url:URL,page:CallPageState) {self.url=url;self.page=page}
+        func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {
+            guard message.frameInfo.securityOrigin.host == url.host,
+                  let data=message.body as? [String:Any],
+                  let kind=data["type"] as? String else {return}
+            switch kind {
+            case "ended": page.ended=true
+            case "state": if let value=data["message"] as? String {page.status=value}
+            case "mute": page.muted=(data["message"] as? String)=="on"
+            default: break
+            }
+        }
         func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
             webView.evaluateJavaScript("Boolean(document.getElementById('start') && document.getElementById('state'))") { [weak self] result,error in
                 guard let self else{return}
                 if result as? Bool == true {self.page.finishLoading()}
-                else {self.page.fail("Сервер вернул другую страницу вместо звонка. Проверь обновление сервера и адрес в настройках.")}
+                else {self.page.fail("Устаревшая страница звонка. Обнови сервер Nightwell Chat.")}
             }
         }
-        func webView(_ webView:WKWebView,didFailProvisionalNavigation navigation:WKNavigation!,withError error:Error) {
-            failed(error)
-        }
-        func webView(_ webView:WKWebView,didFail navigation:WKNavigation!,withError error:Error) { failed(error) }
+        func webView(_ webView:WKWebView,didFailProvisionalNavigation navigation:WKNavigation!,withError error:Error) {failed(error)}
+        func webView(_ webView:WKWebView,didFail navigation:WKNavigation!,withError error:Error) {failed(error)}
         private func failed(_ error:Error) {
-            let code=(error as NSError).code
-            guard code != NSURLErrorCancelled else{return}
-            page.fail("Не удалось загрузить звонок. Код ошибки: \(code). Проверь соединение и адрес сервера.")
+            guard (error as NSError).code != NSURLErrorCancelled else{return}
+            page.fail("Не удалось открыть звонок: \(error.localizedDescription)")
         }
         func webViewWebContentProcessDidTerminate(_ webView:WKWebView) {
             page.fail("Экран звонка остановился. Нажми «Повторить».")
@@ -307,7 +374,7 @@ struct SafariCallView:UIViewRepresentable {
         func webView(_ webView:WKWebView,decidePolicyFor response:WKNavigationResponse,
                      decisionHandler:@escaping (WKNavigationResponsePolicy)->Void) {
             if response.isForMainFrame,let http=response.response as? HTTPURLResponse,!(200..<300).contains(http.statusCode) {
-                page.fail("Сервер не открыл звонок: HTTP \(http.statusCode). Попробуй позвонить заново.")
+                page.fail("Ошибка открытия звонка: HTTP \(http.statusCode).")
                 decisionHandler(.cancel)
             } else {decisionHandler(.allow)}
         }
@@ -323,9 +390,68 @@ struct SafariCallView:UIViewRepresentable {
         func webView(_ webView:WKWebView,requestMediaCapturePermissionFor origin:WKSecurityOrigin,
                      initiatedByFrame frame:WKFrameInfo,type:WKMediaCaptureType,
                      decisionHandler:@escaping (WKPermissionDecision)->Void) {
-            let expectedPort=url.port ?? 443
             let originPort=origin.port == 0 ? 443 : origin.port
-            decisionHandler(origin.protocol=="https" && origin.host==url.host && originPort==expectedPort ? .prompt : .deny)
+            let expectedPort=url.port ?? 443
+            let allowed=origin.protocol=="https" && origin.host==url.host && originPort==expectedPort && page.microphoneAllowed
+            decisionHandler(allowed ? .grant : .deny)
+        }
+    }
+}
+
+struct IncomingCallOverlay:View {
+    let call:VoiceCall
+    @EnvironmentObject private var store:ChatStore
+    @State private var acceptedURL:URL?
+    @State private var answering=false
+    var body:some View {
+        Group {
+            if let acceptedURL {
+                CallScreen(url:acceptedURL)
+            } else {
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing:24) {
+                        Text("NIGHTWELL CHAT").tracking(4).foregroundStyle(.gray)
+                        Spacer()
+                        Image(systemName:"phone.arrow.down.left.fill")
+                            .font(.system(size:66))
+                            .frame(width:140,height:140).background(Color(white:0.15),in:Circle())
+                        Text(call.caller_name ?? "Входящий звонок").font(.system(size:30,weight:.semibold))
+                        Text("Входящий голосовой вызов").foregroundStyle(.gray)
+                        if answering {ProgressView().tint(.white)}
+                        Spacer()
+                        HStack(spacing:55) {
+                            Button {
+                                Task {await store.declineCall(id:call.id);store.incomingCall=nil}
+                            } label:{
+                                Image(systemName:"phone.down.fill").font(.system(size:30))
+                                    .frame(width:76,height:76).background(.red,in:Circle())
+                            }
+                            Button {
+                                answering=true
+                                Task {
+                                    if let answer=await store.acceptCall(id:call.id),
+                                       let url=store.voiceURL(answer) {acceptedURL=url}
+                                    else {store.incomingCall=nil}
+                                    answering=false
+                                }
+                            } label:{
+                                Image(systemName:"phone.fill").font(.system(size:30))
+                                    .frame(width:76,height:76).background(.green,in:Circle())
+                            }.disabled(answering)
+                        }.buttonStyle(.plain).foregroundStyle(.white).padding(.bottom,65)
+                    }.padding(24)
+                }
+            }
+        }
+        .onChange(of:store.endedCallID) {_,cid in if cid == call.id {store.incomingCall=nil}}
+        .task {
+            while !Task.isCancelled && acceptedURL == nil {
+                try? await Task.sleep(for:.seconds(4))
+                if Task.isCancelled || acceptedURL != nil {break}
+                let pending=await store.pendingCalls()
+                if !pending.contains(where:{$0.id==call.id}) {store.incomingCall=nil;break}
+            }
         }
     }
 }
@@ -334,7 +460,6 @@ struct IncomingCallsView:View {
     @EnvironmentObject private var store:ChatStore
     @Environment(\.dismiss) private var dismiss
     @State private var calls:[VoiceCall]=[]
-    @State private var activeCall:CallPresentation?
     var body:some View {
         NavigationStack {
             List {
@@ -344,8 +469,8 @@ struct IncomingCallsView:View {
                         HStack {
                             Button("Ответить"){
                                 Task{
-                                    if let answer=await store.acceptCall(id:call.id),
-                                       let url=store.voiceURL(answer){activeCall=CallPresentation(url:url)}
+                                    store.incomingCall=call
+                                    dismiss()
                                 }
                             }
                             Button("Отклонить",role:.destructive){
@@ -358,7 +483,7 @@ struct IncomingCallsView:View {
             .toolbar{ToolbarItem(placement:.topBarTrailing){Button("Готово"){dismiss()}}}
             .task{await reload()}
             .refreshable{await reload()}
-            .fullScreenCover(item:$activeCall) { call in CallScreen(url:call.url) }
+
         }
     }
     func reload() async {calls=await store.pendingCalls()}

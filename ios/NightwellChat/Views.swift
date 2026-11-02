@@ -4,6 +4,9 @@ import UniformTypeIdentifiers
 import QuickLook
 import AVKit
 
+private let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+private let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+
 private let ink = Color.black
 private let white = Color.white
 private let muted = Color(white: 0.63)
@@ -115,7 +118,7 @@ struct PhoneLoginFields:View {
             }.font(.footnote)
             Text("SMS не используется. Проверяется формат номера, а не принадлежность SIM-карты.")
                 .font(.caption).foregroundStyle(.gray).multilineTextAlignment(.center)
-            Text("Nightwell Chat 0.7 • вход по телефону")
+            Text("Nightwell Chat \(appVersion) • вход по телефону")
                 .font(.caption2).foregroundStyle(.gray)
         }.padding(18).glass()
     }
@@ -1135,7 +1138,7 @@ struct SettingsView: View {
                     HStack { Image(systemName:"circle.lefthalf.filled").foregroundStyle(.cyan); Text("Оформление"); Spacer(); Text("Тёмное").foregroundStyle(.secondary) }
                 }
                 Section("Версия") {
-                    Text("Nightwell Chat 0.7")
+                    Text("Nightwell Chat \(appVersion) (\(appBuild))")
                 }
                 Section("Сервер") {
                     TextField("https://chat.nightwell.fun",text:$server)

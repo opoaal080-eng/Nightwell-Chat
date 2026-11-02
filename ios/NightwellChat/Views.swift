@@ -739,6 +739,91 @@ struct ChatView: View {
     @State private var showingCall=false
     @State private var callURL:URL?
     @State private var showingContactProfile=false
+    @ViewBuilder
+    private func messageRow(_ message: ChatMessage) -> some View {
+        HStack {
+            if message.sender_id == store.me?.id { Spacer(minLength:45) }
+            VStack(alignment:message.sender_id == store.me?.id ? .trailing : .leading,spacing:4) {
+                if chat.kind == "group" && message.sender_id != store.me?.id {
+                    Text(message.sender_name).font(.caption.bold()).foregroundStyle(muted)
+                }
+                if message.deleted == 0,let file=message.attachment, file.filename.hasPrefix("video_circle.") {
+                    VideoCircleBubble(file:file)
+                } else if message.deleted == 0,let file=message.attachment {
+                    Button {
+                        Task {
+                            if file.content_type.hasPrefix("audio/") {
+                                if playingAudioID == file.id {
+                                    audioPlayer?.pause()
+                                    audioPlayer = nil
+                                    playingAudioID = nil
+                                } else if let url = await store.downloadFile(file) {
+                                    audioPlayer?.pause()
+                                    let newPlayer=AVPlayer(url: url)
+                                    audioPlayer = newPlayer
+                                    playingAudioID = file.id
+                                    if let audioEndObserver {NotificationCenter.default.removeObserver(audioEndObserver)}
+                                    audioEndObserver=NotificationCenter.default.addObserver(forName:.AVPlayerItemDidPlayToEndTime,object:newPlayer.currentItem,queue:.main){_ in
+                                        newPlayer.seek(to:.zero)
+                                        playingAudioID=nil
+                                    }
+                                    newPlayer.play()
+                                }
+                            } else {
+                                preview = await store.downloadFile(file)
+                            }
+                        }
+                    } label: {
+                        if file.content_type.hasPrefix("image/"){
+                            PrivateImage(attachment:file.id)
+                        } else if file.content_type.hasPrefix("audio/") {
+                            HStack(spacing:10) { Image(systemName:playingAudioID == file.id ? "pause.circle.fill" : "play.circle.fill").font(.title2); VoiceWaveform() }
+                        } else if file.content_type.hasPrefix("video/") {
+                            Label("Видеосообщение",systemImage:"play.rectangle.fill")
+                        } else {
+                            Label(file.filename,systemImage:"doc.fill")
+                        }
+                    }.buttonStyle(.plain)
+                }
+                if message.deleted != 0 || !message.body.isEmpty {
+                    Text(message.deleted != 0 ? "Сообщение удалено" : message.body)
+                    .foregroundStyle(message.deleted != 0 ? muted : white)
+                    .font(.body)
+                }
+                HStack(spacing:6) {
+                    if message.edited_at != nil { Text("изм.") }
+                    Text(String(message.created_at.dropFirst(11).prefix(5)))
+                }.font(.system(size:10)).foregroundStyle(muted)
+                if !message.reactions.isEmpty {
+                    HStack { ForEach(message.reactions) { reaction in
+                        Text("\(reaction.emoji) \(reaction.count)").font(.caption)
+                            .padding(5).background(.white.opacity(0.1),in:Capsule())
+                            .transition(.scale(scale:0.7).combined(with:.opacity))
+                    } }
+                    .animation(.spring(response:0.3,dampingFraction:0.65),value:message.reactions.count)
+                }
+            }
+            .padding(message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true ? 0 : 11)
+            .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) ? Color.clear : (message.sender_id == store.me?.id ? glassBlue.opacity(0.25) : white.opacity(0.10)),in:RoundedRectangle(cornerRadius:20))
+            .contextMenu {
+                if message.deleted == 0 {
+                    Button("Ответить",systemImage:"arrowshape.turn.up.left") { reply=message }
+                    Button("🤍") { Task { await store.react(message.id,emoji:"🤍") } }
+                    Button("👍") { Task { await store.react(message.id,emoji:"👍") } }
+                    if message.sender_id == store.me?.id {
+                        Button("Изменить",systemImage:"pencil") { editing=message; editText=message.body }
+                        Button("Удалить",systemImage:"trash",role:.destructive) { Task { await store.delete(message.id); await reload() } }
+                    }
+                }
+            }
+            if message.sender_id != store.me?.id { Spacer(minLength:45) }
+        }
+        .transition(.asymmetric(
+            insertion:.opacity.combined(with:.move(edge:.bottom)).combined(with:.scale(scale:0.96)),
+            removal:.opacity
+        ))
+        .id(message.id)
+    }
     var body: some View {
         VStack(spacing:0) {
             ScrollViewReader { proxy in
@@ -749,88 +834,7 @@ struct ChatView: View {
                                 .font(.caption).foregroundStyle(muted).padding(10)
                         }
                         ForEach(messages) { message in
-                            HStack {
-                                if message.sender_id == store.me?.id { Spacer(minLength:45) }
-                                VStack(alignment:message.sender_id == store.me?.id ? .trailing : .leading,spacing:4) {
-                                    if chat.kind == "group" && message.sender_id != store.me?.id {
-                                        Text(message.sender_name).font(.caption.bold()).foregroundStyle(muted)
-                                    }
-                                    if message.deleted == 0,let file=message.attachment, file.filename.hasPrefix("video_circle.") {
-                                        VideoCircleBubble(file:file)
-                                    } else if message.deleted == 0,let file=message.attachment {
-                                        Button {
-                                            Task {
-                                                if file.content_type.hasPrefix("audio/") {
-                                                    if playingAudioID == file.id {
-                                                        audioPlayer?.pause()
-                                                        audioPlayer = nil
-                                                        playingAudioID = nil
-                                                    } else if let url = await store.downloadFile(file) {
-                                                        audioPlayer?.pause()
-                                                        let newPlayer=AVPlayer(url: url)
-                                                        audioPlayer = newPlayer
-                                                        playingAudioID = file.id
-                                                        if let audioEndObserver {NotificationCenter.default.removeObserver(audioEndObserver)}
-                                                        audioEndObserver=NotificationCenter.default.addObserver(forName:.AVPlayerItemDidPlayToEndTime,object:newPlayer.currentItem,queue:.main){_ in
-                                                            newPlayer.seek(to:.zero)
-                                                            playingAudioID=nil
-                                                        }
-                                                        newPlayer.play()
-                                                    }
-                                                } else {
-                                                    preview = await store.downloadFile(file)
-                                                }
-                                            }
-                                        } label: {
-                                            if file.content_type.hasPrefix("image/"){
-                                                PrivateImage(attachment:file.id)
-                                            } else if file.content_type.hasPrefix("audio/") {
-                                                HStack(spacing:10) { Image(systemName:playingAudioID == file.id ? "pause.circle.fill" : "play.circle.fill").font(.title2); VoiceWaveform() }
-                                            } else if file.content_type.hasPrefix("video/") {
-                                                Label("Видеосообщение",systemImage:"play.rectangle.fill")
-                                            } else {
-                                                Label(file.filename,systemImage:"doc.fill")
-                                            }
-                                        }.buttonStyle(.plain)
-                                    }
-                                    if message.deleted != 0 || !message.body.isEmpty {
-                                        Text(message.deleted != 0 ? "Сообщение удалено" : message.body)
-                                        .foregroundStyle(message.deleted != 0 ? muted : white)
-                                        .font(.body)
-                                    }
-                                    HStack(spacing:6) {
-                                        if message.edited_at != nil { Text("изм.") }
-                                        Text(String(message.created_at.dropFirst(11).prefix(5)))
-                                    }.font(.system(size:10)).foregroundStyle(muted)
-                                    if !message.reactions.isEmpty {
-                                        HStack { ForEach(message.reactions) { reaction in
-                                            Text("\(reaction.emoji) \(reaction.count)").font(.caption)
-                                                .padding(5).background(.white.opacity(0.1),in:Capsule())
-                                                .transition(.scale(scale:0.7).combined(with:.opacity))
-                                        } }
-                                        .animation(.spring(response:0.3,dampingFraction:0.65),value:message.reactions.count)
-                                    }
-                                }
-                                .padding(message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true ? 0 : 11)
-                                .background((message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true) ? Color.clear : (message.sender_id == store.me?.id ? glassBlue.opacity(0.25) : white.opacity(0.10)),in:RoundedRectangle(cornerRadius:20))
-                                .contextMenu {
-                                    if message.deleted == 0 {
-                                        Button("Ответить",systemImage:"arrowshape.turn.up.left") { reply=message }
-                                        Button("🤍") { Task { await store.react(message.id,emoji:"🤍") } }
-                                        Button("👍") { Task { await store.react(message.id,emoji:"👍") } }
-                                        if message.sender_id == store.me?.id {
-                                            Button("Изменить",systemImage:"pencil") { editing=message; editText=message.body }
-                                            Button("Удалить",systemImage:"trash",role:.destructive) { Task { await store.delete(message.id); await reload() } }
-                                        }
-                                    }
-                                }
-                                if message.sender_id != store.me?.id { Spacer(minLength:45) }
-                            }
-                            .transition(.asymmetric(
-                                insertion:.opacity.combined(with:.move(edge:.bottom)).combined(with:.scale(scale:0.96)),
-                                removal:.opacity
-                            ))
-                            .id(message.id)
+                            messageRow(message)
                         }
                     }.padding(.horizontal,14).padding(.top,12).padding(.bottom,100)
                 }

@@ -15,7 +15,7 @@ public final class CallActivity extends Activity {
         getWindow().setStatusBarColor(0xff080808);
         LinearLayout box=new LinearLayout(this); box.setOrientation(1);box.setBackgroundColor(0xff080808);
         Button close=new Button(this);close.setText("Завершить звонок");box.addView(close);
-        close.setOnClickListener(v->finish());
+        close.setOnClickListener(v->endCall());
         web=new WebView(this);box.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(box);
         web.setWebChromeClient(new WebChromeClient(){
             @Override public void onPermissionRequest(PermissionRequest req){
@@ -64,5 +64,15 @@ public final class CallActivity extends Activity {
         super.onRequestPermissionsResult(req,p,granted);
         if(req==51 && waiting!=null){grantMedia(waiting);waiting=null;}
     }
+    private boolean ending=false;
+    private void endCall(){
+        if(ending)return;
+        ending=true;
+        if(web!=null){
+            web.evaluateJavascript("if(typeof closeCall==='function')closeCall();",ignored->
+                web.postDelayed(this::finish,250));
+        }else finish();
+    }
+    @Override public void onBackPressed(){endCall();}
     @Override public void onDestroy(){if(waiting!=null)waiting.deny();if(web!=null){web.loadUrl("about:blank");web.destroy();}super.onDestroy();}
 }

@@ -934,6 +934,8 @@ async def call_signal(ws: WebSocket, cid: str, ticket: str = Query(default="")):
             for other in list(room.values()): await other.send_json({"type":"peer_ready"})
         while True:
             payload=await ws.receive_json()
+            # Ignore frames from a socket superseded by a reconnect.
+            if room.get(uid) is not ws: break
             if not isinstance(payload,dict): continue
             kind=payload.get("type")
             if kind=="hangup":

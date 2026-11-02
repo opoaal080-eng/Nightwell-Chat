@@ -806,7 +806,9 @@ struct ChatView: View {
                                         HStack { ForEach(message.reactions) { reaction in
                                             Text("\(reaction.emoji) \(reaction.count)").font(.caption)
                                                 .padding(5).background(.white.opacity(0.1),in:Capsule())
+                                                .transition(.scale(scale:0.7).combined(with:.opacity))
                                         } }
+                                        .animation(.spring(response:0.3,dampingFraction:0.65),value:message.reactions.count)
                                     }
                                 }
                                 .padding(message.attachment?.content_type.hasPrefix("image/") == true || message.attachment?.filename.hasPrefix("video_circle.") == true ? 0 : 11)

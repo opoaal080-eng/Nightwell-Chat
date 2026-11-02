@@ -80,8 +80,8 @@ public final class CallActivity extends Activity {
         if(ending)return;
         ending=true;
         if(web!=null){
-            web.evaluateJavascript("if(typeof closeCall==='function')closeCall();",ignored->
-                web.postDelayed(this::finish,250));
+            web.postDelayed(this::finish,1200);
+            web.evaluateJavascript("if(typeof closeCall==='function')closeCall();",ignored->finish());
         }else finish();
     }
     @Override public void onBackPressed(){endCall();}

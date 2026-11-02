@@ -7,6 +7,7 @@ struct Person: Codable, Identifiable, Hashable {
     let username: String
     let display_name: String
     let has_avatar: Bool?
+    var online:Bool? = nil
 }
 struct AuthResponse: Decodable {
     let access_token: String

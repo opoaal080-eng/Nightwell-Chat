@@ -141,6 +141,7 @@ struct ReferenceChatRow:View {
                 HStack(alignment:.top){Text(chat.last_message?.body.isEmpty == false ? chat.last_message!.body : (chat.last_message == nil ? "Новый чат":"Вложение"))
                     .font(.system(size:16)).foregroundStyle(referenceGray).lineLimit(2).frame(maxWidth:.infinity,alignment:.leading)
                     VStack(spacing:6){if chat.unread>0 {Text("\(chat.unread)").font(.system(size:12,weight:.semibold)).foregroundStyle(.black).padding(.horizontal,6).padding(.vertical,2).background(referenceGray,in:Capsule())};if pinned {Image(systemName:"pin.fill").font(.system(size:14)).foregroundStyle(referenceGray)}}
+                }
             }.padding(.top,8).frame(height:76,alignment:.top).overlay(alignment:.bottom){Rectangle().fill(Color.white.opacity(0.10)).frame(height:0.5)}
         }.contentShape(Rectangle())
     }
@@ -171,7 +172,7 @@ struct ReferenceContactsView:View {
             HStack {Image(systemName:"magnifyingglass");TextField("Поиск",text:$query).textInputAutocapitalization(.never)}.font(.system(size:18)).foregroundStyle(referenceGray).padding(12).background(Color(white:0.10),in:Capsule()).padding(.horizontal,16).padding(.top,10).padding(.bottom,15)
             ScrollView {LazyVStack(spacing:0){
                 ShareLink(item:URL(string:"https://chat.nightwell.fun")!){HStack(spacing:22){Image(systemName:"person.badge.plus").font(.system(size:25)).frame(width:40);Text("Пригласить").font(.system(size:18));Spacer()}.foregroundStyle(referenceBlue).padding(.vertical,13)}
-                ForEach(contacts){person in Button {Task{if let c=await store.openDirect(person){onOpen(c)}}} label:{ReferencePersonRow(person:person,subtitle:"@"+person.username)}.buttonStyle(.plain)}
+                ForEach(contacts){person in Button {Task{if let c=await store.openDirect(person){onOpen(c)}}} label:{ReferencePersonRow(person:person,subtitle:person.online == true ? "в сети":"не в сети")}.buttonStyle(.plain)}
             }.padding(.horizontal,16).padding(.bottom,90)}
         }.sheet(isPresented:$add){PeopleView {add=false;onOpen($0)}}
             .task(id:query){guard query.count>1 else{people=[];return};try? await Task.sleep(for:.milliseconds(300));guard !Task.isCancelled else{return};people=await store.find(query)}
@@ -181,7 +182,7 @@ struct ReferencePersonRow:View {
     let person:Person
     var subtitle:String
     var body:some View {HStack(spacing:10){ReferenceAvatar(person:person,title:person.display_name,size:40)
-        VStack(alignment:.leading,spacing:2){Text(person.display_name).font(.system(size:18)).foregroundStyle(.white).lineLimit(1);Text(subtitle).font(.system(size:14)).foregroundStyle(referenceGray).lineLimit(1);Divider().overlay(Color.white.opacity(0.08)).padding(.top,6)}
+        VStack(alignment:.leading,spacing:2){Text(person.display_name).font(.system(size:18)).foregroundStyle(.white).lineLimit(1);Text(subtitle).font(.system(size:14)).foregroundStyle(person.online == true ? referenceBlue:referenceGray).lineLimit(1);Divider().overlay(Color.white.opacity(0.08)).padding(.top,6)}
     }.padding(.top,5).frame(minHeight:54).contentShape(Rectangle())}
 }
 struct CallHistoryItem:Decodable,Identifiable {let id:String;let person:Person;let outgoing:Bool;let missed:Bool;let created_at:Int;let status:String}
@@ -313,14 +314,14 @@ struct ReferenceGroupProfile:View {
         NavigationStack {
             ScrollView {VStack(spacing:18){
                 ReferenceAvatar(person:chat.other_user,title:chat.title,size:100).padding(.top,20)
-                VStack(spacing:2){Text(chat.title).font(.system(size:32,weight:.semibold));Text(chat.kind=="group" ? "\(details?.members.count ?? 0) участников":"@\(chat.other_user?.username ?? "")").font(.system(size:17)).foregroundStyle(referenceGray)}
+                VStack(spacing:2){Text(chat.title).font(.system(size:32,weight:.semibold));Text(chat.kind=="group" ? "\(details?.members.count ?? 0) участников, \(details?.members.filter{$0.online == true}.count ?? 0) в сети":"@\(chat.other_user?.username ?? "")").font(.system(size:17)).foregroundStyle(referenceGray)}
                 actionRow.padding(.top,18)
                 ScrollView(.horizontal,showsIndicators:false){ReferenceSegments(titles:["Участники","Медиа","Избранное","Файлы"],selected:$section).frame(width:440)}.padding(.top,6)
                 if searching {HStack{Image(systemName:"magnifyingglass");TextField("Поиск в переписке",text:$query);Button {searching=false;query=""} label:{Image(systemName:"xmark.circle.fill")}}.padding(12).background(Color(white:0.12),in:Capsule())}
                 VStack(spacing:0){
                     if section==0 && !searching {
                         if details?.role=="owner" && chat.kind=="group" {Button {add=true} label:{Label("Добавить участников",systemImage:"person.badge.plus").font(.system(size:18)).frame(maxWidth:.infinity,alignment:.leading).padding(16)}}
-                        ForEach(details?.members ?? []){p in ReferencePersonRow(person:p,subtitle:p.id==store.me?.id ? "это ты":"@"+p.username).padding(.horizontal,14)}
+                        ForEach(details?.members ?? []){p in ReferencePersonRow(person:p,subtitle:p.online == true ? "в сети":"не в сети").padding(.horizontal,14)}
                     } else {
                         ForEach(filteredMessages){message in Button {Task{if let a=message.attachment{fileURL=await store.downloadFile(a)}}} label:{HStack(spacing:12){if let a=message.attachment,a.content_type.hasPrefix("image/"){PrivateImage(attachment:a.id).frame(width:55,height:55).clipped()}else{Image(systemName:message.attachment == nil ? "bubble.left":"doc").frame(width:35)};VStack(alignment:.leading,spacing:4){Text(message.body.isEmpty ? message.attachment?.filename ?? "Вложение":message.body).lineLimit(2);Text(referenceDate(message.created_at)).font(.caption).foregroundStyle(referenceGray)};Spacer()}.padding(14)}.foregroundStyle(.white);Divider().padding(.leading,60)}
                         if filteredMessages.isEmpty {Text("Пока пусто").foregroundStyle(referenceGray).frame(maxWidth:.infinity).padding(28)}

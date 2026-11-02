@@ -199,7 +199,8 @@ def member(c, chat_id, uid):
 
 def user_public(row):
     return {**{k:row[k] for k in ("id","username","display_name")},
-            "has_avatar": bool(row["avatar_key"]) if "avatar_key" in row.keys() else False}
+            "has_avatar": bool(row["avatar_key"]) if "avatar_key" in row.keys() else False,
+            "online":bool(clients.get(row["id"]))}
 
 # Live socket connections are scoped to one process. Use Redis pub/sub when scaling to multiple workers.
 clients: dict[int,set[WebSocket]] = {}

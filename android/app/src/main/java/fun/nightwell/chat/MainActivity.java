@@ -52,7 +52,7 @@ public final class MainActivity extends Activity {
     final Handler voiceHandler=new Handler(Looper.getMainLooper());
     final Runnable voiceTimeout=()->{if(voiceRecorder!=null)finishVoice();};
     final Runnable refresh=new Runnable(){ @Override public void run(){
-        if("chat".equals(screen))loadMessages(false);
+        if("chat".equals(screen)){loadMessages(false);checkIncoming();}
         else if("inbox".equals(screen)){loadChats();checkIncoming();}
         if("chat".equals(screen)||"inbox".equals(screen))handler.postDelayed(this,6500);
     }};
@@ -256,6 +256,9 @@ public final class MainActivity extends Activity {
         super.onBackPressed();
     }
     void chat(){enter("chat");heading(chatTitle);
+        LinearLayout incoming=new LinearLayout(this);incoming.setOrientation(1);
+        incoming.setTag("incoming");page.addView(incoming);
+        checkIncoming();
         if(otherId>0)btn("Открыть профиль собеседника",this::contactProfile);
         btn("← Список чатов",this::inbox);
         if(otherId>0)btn("Позвонить",this::startCall);
@@ -575,9 +578,9 @@ public final class MainActivity extends Activity {
         });
     }
     void startCall(){int id=otherId;if(id<=0)return;perform(()->http("/calls/direct/"+id,"POST",null),b->openCall(json(b)));}
-    void checkIncoming(){if(!"inbox".equals(screen))return;
+    void checkIncoming(){if(!"inbox".equals(screen)&&!"chat".equals(screen))return;
         perform(()->http("/calls/pending","GET",null),b->{
-            if(!"inbox".equals(screen))return;
+            if(!"inbox".equals(screen)&&!"chat".equals(screen))return;
             LinearLayout row=(LinearLayout)page.findViewWithTag("incoming");if(row==null)return;row.removeAllViews();
             JSONArray pending=array(b);
             for(int i=0;i<pending.length();i++){

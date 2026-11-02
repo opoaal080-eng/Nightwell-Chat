@@ -205,8 +205,26 @@ final class CallPageState: ObservableObject {
     func startAudioIfReady() {
         guard webReady, microphoneAllowed, !started, !ended else {return}
         started = true
-        webView?.evaluateJavaScript("window.startCallAudio && window.startCallAudio();") { _, error in
-            if let error {self.started=false;self.fail("Не удалось включить микрофон: \(error.localizedDescription)")}
+        // startCallAudio is an async JavaScript function and returns a Promise.
+        // WKWebView.evaluateJavaScript cannot marshal Promises into Foundation.
+        // Return a plain Bool instead and let the native bridge receive call status.
+        let script = """
+        (() => {
+            if (typeof window.startCallAudio !== 'function') return false;
+            void window.startCallAudio();
+            return true;
+        })()
+        """
+        guard let webView else {started=false;return}
+        webView.evaluateJavaScript(script) { [weak self] result, error in
+            guard let self else {return}
+            if let error {
+                self.started = false
+                self.fail("Не удалось запустить звонок: \(error.localizedDescription)")
+            } else if (result as? Bool) != true {
+                self.started = false
+                self.fail("Не удалось включить звонок. Обнови файлы сервера Nightwell Chat.")
+            }
         }
     }
     func toggleMute() {

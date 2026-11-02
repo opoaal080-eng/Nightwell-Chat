@@ -939,6 +939,21 @@ struct ChatView: View {
                                 .frame(width:104,height:104)
                             Text(person.display_name).font(.title2.bold())
                             Text("@"+person.username).foregroundStyle(.secondary)
+                            Button {
+                                showingContactProfile=false
+                                Task {
+                                    if let call=await store.makeCall(to:person.id),
+                                       let url=store.voiceURL(call) {
+                                        callURL=url
+                                        showingCall=true
+                                    }
+                                }
+                            } label: {
+                                Label("Позвонить",systemImage:"phone.fill")
+                                    .frame(maxWidth:.infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(.top,8)
                         } else {
                             Text(chat.title).font(.title2.bold())
                         }

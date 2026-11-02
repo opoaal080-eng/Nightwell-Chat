@@ -656,7 +656,7 @@ public final class MainActivity extends Activity {
     void profile(){enter("profile");heading("Профиль");btn("← К чатам",this::inbox);
         if(myself==null)return;
         hint("@"+myself.optString("username"));
-        hint("Nightwell Chat 0.11.4");
+        hint("Nightwell Chat 0.11.5");
         ImageView avatar=new ImageView(this);avatar.setAdjustViewBounds(true);avatar.setMaxHeight(dp(160));
         avatar.setImageResource(android.R.drawable.sym_def_app_icon);
         page.addView(avatar,new LinearLayout.LayoutParams(dp(120),dp(120)));

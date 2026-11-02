@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
     setup()
     yield
 
-app = FastAPI(title="Nightwell Chat", version="0.8.0", lifespan=lifespan)
+app = FastAPI(title="Nightwell Chat", version="0.11.5", lifespan=lifespan)
 
 class Credentials(BaseModel):
     username: str = Field(min_length=3,max_length=24)

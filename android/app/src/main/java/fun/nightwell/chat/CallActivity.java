@@ -5,6 +5,7 @@ import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.net.ConnectivityManager;
 import android.net.Network;
+import android.net.Uri;
 import android.content.Context;
 import android.webkit.*;
 import android.widget.*;
@@ -18,8 +19,16 @@ public final class CallActivity extends Activity {
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;
     private boolean networkLost=false;
+    private Uri allowedCallUri;
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
+        String target=getIntent().getStringExtra("url");
+        try{allowedCallUri=Uri.parse(target==null?"":target);}catch(Exception ignored){finish();return;}
+        if(!"https".equalsIgnoreCase(allowedCallUri.getScheme())||allowedCallUri.getHost()==null||
+            allowedCallUri.getPath()==null||!allowedCallUri.getPath().matches("/calls/[0-9a-f]{32}/page")||
+            allowedCallUri.getFragment()==null||!allowedCallUri.getFragment().startsWith("ticket=")){
+            finish();return;
+        }
         getWindow().setStatusBarColor(0xff080808);
         LinearLayout box=new LinearLayout(this); box.setOrientation(1);box.setBackgroundColor(0xff080808);
         Button close=new Button(this);close.setText("Завершить звонок");box.addView(close);
@@ -31,7 +40,7 @@ public final class CallActivity extends Activity {
         web.setWebChromeClient(new WebChromeClient(){
             @Override public void onPermissionRequest(PermissionRequest req){
                 runOnUiThread(()->{
-                    if(!"https://chat.nightwell.fun".equals(req.getOrigin().toString())){
+                    if(!sameOrigin(req.getOrigin())){
                         req.deny();return;
                     }
                     ArrayList<String> missing=new ArrayList<>();
@@ -59,7 +68,7 @@ public final class CallActivity extends Activity {
             @Override public void onReceivedHttpError(WebView view,WebResourceRequest request,WebResourceResponse response){if(request.isForMainFrame())showError("Сервер не открыл звонок: HTTP "+response.getStatusCode());}
             @Override public void onPageFinished(WebView view,String url){
                 super.onPageFinished(view,url);
-                if(url.startsWith("https://chat.nightwell.fun/calls/")&&!ending){
+                if(sameCallOrigin(Uri.parse(url))&&!ending){
                     view.evaluateJavascript("Boolean(document.getElementById('start') && document.getElementById('state'))",result->{
                         if("true".equals(result)){status.setVisibility(View.GONE);retry.setVisibility(View.GONE);}
                         else showError("Сервер вернул другую страницу вместо звонка");
@@ -67,8 +76,7 @@ public final class CallActivity extends Activity {
                 }
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){
-                String url=request.getUrl().toString();
-                return !url.startsWith("https://chat.nightwell.fun/calls/");
+                return !sameCallOrigin(request.getUrl());
             }
             @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error){
                 if(request.isForMainFrame()&&!isFinishing()){
@@ -99,8 +107,14 @@ public final class CallActivity extends Activity {
             };
             connectivity.registerDefaultNetworkCallback(networkCallback);
         }
-        String u=getIntent().getStringExtra("url");
-        if(u!=null && u.startsWith("https://chat.nightwell.fun/calls/"))web.loadUrl(u);else finish();
+        web.loadUrl(allowedCallUri.toString());
+    }
+    private boolean sameOrigin(Uri uri){
+        return uri!=null && allowedCallUri!=null && "https".equalsIgnoreCase(uri.getScheme()) &&
+            allowedCallUri.getHost().equalsIgnoreCase(uri.getHost()) && allowedCallUri.getPort()==uri.getPort();
+    }
+    private boolean sameCallOrigin(Uri uri){
+        return sameOrigin(uri) && uri.getPath()!=null && uri.getPath().startsWith("/calls/");
     }
     private void showError(String text){status.setVisibility(View.VISIBLE);status.setText(text);retry.setVisibility(View.VISIBLE);}
     private void grantMedia(PermissionRequest req){

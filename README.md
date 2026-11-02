@@ -1,4 +1,4 @@
-# Nightwell Chat Server v0.5.1
+# Nightwell Chat Server v0.11.5
 
 Windows-сервер Nightwell Chat без контейнеров. Python 3.12 + FastAPI + SQLite. **Отдельный сервис от Nightwell Music**.
 

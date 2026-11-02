@@ -60,6 +60,8 @@ def test_voice_call_accept_end_and_access():
         assert 'ticket' in accepted.json()
         html=c.get(f'/calls/{call_id}/page')
         assert html.status_code == 200 and 'WebRTC' in html.text
+        assert 'id="mute"' in html.text
+        assert 'id="hang"' in html.text
         ended=c.post(f'/calls/{call_id}/end',headers=ah)
         assert ended.status_code == 200
         assert c.post(f'/calls/{call_id}/accept',headers=bh).status_code == 409

@@ -235,14 +235,22 @@ enum NetworkError: LocalizedError {
         }
         eventVersion += 1
     }
-    func loadAvatar(_ id:Int) async -> Data? { try? await authorizedData("/users/\(id)/avatar") }
+    func loadAvatar(_ id:Int) async -> Data? {
+        do {
+            var req=URLRequest(url:try url("/users/\(id)/avatar"),cachePolicy:.reloadIgnoringLocalCacheData,timeoutInterval:20)
+            req.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization")
+            let (bytes,response)=try await URLSession.shared.data(for:req)
+            guard let http=response as? HTTPURLResponse,http.statusCode==200,UIImage(data:bytes) != nil else {return nil}
+            return bytes
+        } catch {return nil}
+    }
     @discardableResult func updateAvatar(_ bytes:Data) async -> Bool {
         do {
             try await upload(bytes,to:"/me/avatar",filename:"avatar.jpg",mime:"image/jpeg")
             let refreshed:Person = try await request("/me")
-            guard refreshed.has_avatar == true else {throw NetworkError.server("Сервер не подтвердил сохранение аватарки")}
             guard await loadAvatar(refreshed.id) != nil else {throw NetworkError.server("Аватарка загружена, но сервер не отдаёт её обратно")}
             me=refreshed
+            await reloadChats()
             eventVersion += 1
             alertText = ""
             return true

@@ -67,9 +67,8 @@ struct AvatarCircle: View {
         .background(.white.opacity(0.12),in:Circle())
         .clipShape(Circle())
         .task(id:"\(person?.id ?? 0)-\(store.eventVersion)") {
-            image=nil
-            if let p=person,p.has_avatar == true,
-               let bytes=await store.loadAvatar(p.id) { image=UIImage(data:bytes) }
+            if let p=person { image=await store.loadAvatar(p.id).flatMap { UIImage(data:$0) } }
+            else { image=nil }
         }
     }
 }
@@ -80,6 +79,7 @@ struct EditProfileView: View {
     @State private var savingAvatar=false
     @State private var avatarPreview:UIImage?
     @State private var name=""
+    @State private var avatarStatus=""
     var body:some View {
         Form {
             Section("Аватар") {
@@ -93,6 +93,7 @@ struct EditProfileView: View {
                         .disabled(savingAvatar)
                     if savingAvatar {ProgressView()}
                 }
+                if !avatarStatus.isEmpty { Text(avatarStatus).font(.caption).foregroundStyle(.secondary) }
             }
             Section("Имя") {
                 TextField("Имя",text:$name)
@@ -104,26 +105,37 @@ struct EditProfileView: View {
         }.navigationTitle("Мой профиль")
         .onAppear{name=store.me?.display_name ?? ""}
         .onChange(of:picked){_,item in
+            guard let item else {return}
             Task {
                 savingAvatar=true
-                defer {savingAvatar=false}
-                guard let bytes=try? await item?.loadTransferable(type:Data.self),
+                avatarStatus="Сохраняем фото на сервере…"
+                defer {savingAvatar=false; picked=nil}
+                guard let bytes=try? await item.loadTransferable(type:Data.self),
                       let img=UIImage(data:bytes) else {
-                    store.alertText="Не удалось прочитать выбранную фотографию"
+                    avatarStatus="Не удалось прочитать фотографию. Выбери её ещё раз."
+                    store.alertText=avatarStatus
                     return
                 }
-                let renderer=UIGraphicsImageRenderer(size:CGSize(width:512,height:512))
-                let jpg=renderer.jpegData(withCompressionQuality:0.83) { context in
-                    let side=min(img.size.width,img.size.height)
-                    let crop=CGRect(x:(img.size.width-side)/2,y:(img.size.height-side)/2,width:side,height:side)
-                    if let cg=img.cgImage?.cropping(to:crop) {
-                        UIImage(cgImage:cg,scale:img.scale,orientation:img.imageOrientation).draw(in:CGRect(x:0,y:0,width:512,height:512))
-                    } else {
-                        img.draw(in:CGRect(x:0,y:0,width:512,height:512))
-                    }
+                let format=UIGraphicsImageRendererFormat()
+                format.scale=1
+                format.opaque=true
+                let renderer=UIGraphicsImageRenderer(size:CGSize(width:512,height:512),format:format)
+                let jpg=renderer.jpegData(withCompressionQuality:0.85) { _ in
+                    UIColor.black.setFill()
+                    UIRectFill(CGRect(x:0,y:0,width:512,height:512))
+                    let scale=max(512/img.size.width,512/img.size.height)
+                    let size=CGSize(width:img.size.width*scale,height:img.size.height*scale)
+                    img.draw(in:CGRect(x:(512-size.width)/2,y:(512-size.height)/2,width:size.width,height:size.height))
                 }
                 let saved=await store.updateAvatar(jpg)
-                if saved {avatarPreview=UIImage(data:jpg)}
+                if saved {
+                    if let id=store.me?.id,let bytes=await store.loadAvatar(id) {
+                        avatarPreview=UIImage(data:bytes)
+                    }
+                    avatarStatus="Фото сохранено на сервере"
+                } else {
+                    avatarStatus=store.alertText.isEmpty ? "Фото не сохранилось. Попробуй ещё раз." : store.alertText
+                }
             }
         }
     }
@@ -157,37 +169,163 @@ struct PhoneLinkView:View {
     }
 }
 
+struct CallPresentation: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+final class CallPageState: ObservableObject {
+    @Published var loading = true
+    @Published var failure: String?
+    @Published var closing = false
+    weak var webView: WKWebView?
+    var timeout: DispatchWorkItem?
+    func fail(_ message:String) {
+        timeout?.cancel()
+        loading=false
+        failure=message
+    }
+    func finishLoading() {
+        timeout?.cancel()
+        loading=false
+        failure=nil
+    }
+    func end(_ completion:@escaping () -> Void) {
+        guard !closing else { return }
+        closing=true
+        timeout?.cancel()
+        var completed=false
+        let finish = {
+            guard !completed else { return }
+            completed=true
+            completion()
+        }
+        guard let webView else { finish(); return }
+        webView.evaluateJavaScript("if (typeof closeCall === 'function') closeCall();") { _,_ in finish() }
+        DispatchQueue.main.asyncAfter(deadline:.now()+1,execute:finish)
+    }
+}
+
+struct CallScreen: View {
+    let url:URL
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var page=CallPageState()
+    @State private var attempt=0
+    var body:some View {
+        VStack(spacing:0) {
+            HStack {
+                Label("Звонок",systemImage:"phone.fill").font(.headline)
+                Spacer()
+                Button(page.closing ? "Завершаем…" : "Завершить") { page.end { dismiss() } }
+                    .tint(.red).disabled(page.closing)
+            }.padding(18).background(Color(white:0.10))
+            ZStack {
+                Color.black
+                SafariCallView(url:url,page:page).id(attempt)
+                if page.loading {
+                    VStack(spacing:16) {
+                        ProgressView().tint(.white)
+                        Text("Открываем звонок…")
+                    }.frame(maxWidth:.infinity,maxHeight:.infinity).background(Color.black)
+                }
+                if let failure=page.failure {
+                    VStack(spacing:18) {
+                        Image(systemName:"phone.badge.exclamationmark").font(.largeTitle)
+                        Text(failure).multilineTextAlignment(.center)
+                        Button("Повторить") {
+                            page.failure=nil
+                            page.loading=true
+                            attempt += 1
+                        }.buttonStyle(.borderedProminent)
+                    }.padding(28).frame(maxWidth:.infinity,maxHeight:.infinity).background(Color.black)
+                }
+            }
+        }.foregroundStyle(.white).background(Color.black.ignoresSafeArea())
+            .interactiveDismissDisabled()
+    }
+}
+
 struct SafariCallView:UIViewRepresentable {
     let url:URL
-    func makeCoordinator()->Coordinator { Coordinator() }
+    @ObservedObject var page:CallPageState
+    func makeCoordinator()->Coordinator { Coordinator(url:url,page:page) }
     func makeUIView(context:Context)->WKWebView {
-        let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
-        let view = WKWebView(frame: .zero, configuration: config)
-        view.uiDelegate = context.coordinator
+        let config=WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback=true
+        config.mediaTypesRequiringUserActionForPlayback=[]
+        let view=WKWebView(frame:.zero,configuration:config)
+        view.uiDelegate=context.coordinator
+        view.navigationDelegate=context.coordinator
         view.backgroundColor = .black
-        view.isOpaque = false
-        view.scrollView.isScrollEnabled = false
-        view.load(URLRequest(url:url))
+        view.scrollView.backgroundColor = .black
+        view.isOpaque=false
+        view.scrollView.isScrollEnabled=true
+        page.webView=view
+        var request=URLRequest(url:url,cachePolicy:.reloadIgnoringLocalCacheData,timeoutInterval:25)
+        request.httpMethod="GET"
+        view.load(request)
+        let deadline=DispatchWorkItem { [weak page] in
+            guard let page,page.loading else {return}
+            page.webView?.stopLoading()
+            page.fail("Сервер не загрузил экран звонка. Проверь соединение и повтори.")
+        }
+        page.timeout=deadline
+        DispatchQueue.main.asyncAfter(deadline:.now()+30,execute:deadline)
         return view
     }
-    func updateUIView(_ vc:WKWebView,context:Context){}
-    static func dismantleUIView(_ view:WKWebView,coordinator:Coordinator){
+    func updateUIView(_ view:WKWebView,context:Context) {}
+    static func dismantleUIView(_ view:WKWebView,coordinator:Coordinator) {
+        coordinator.page.timeout?.cancel()
         view.stopLoading()
         view.loadHTMLString("",baseURL:nil)
         view.uiDelegate=nil
+        view.navigationDelegate=nil
     }
-    final class Coordinator:NSObject,WKUIDelegate {
+    final class Coordinator:NSObject,WKUIDelegate,WKNavigationDelegate {
+        let url:URL
+        let page:CallPageState
+        init(url:URL,page:CallPageState) {self.url=url;self.page=page}
+        func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
+            webView.evaluateJavaScript("Boolean(document.getElementById('start') && document.getElementById('state'))") { [weak self] result,error in
+                guard let self else{return}
+                if result as? Bool == true {self.page.finishLoading()}
+                else {self.page.fail("Сервер вернул другую страницу вместо звонка. Проверь обновление сервера и адрес в настройках.")}
+            }
+        }
+        func webView(_ webView:WKWebView,didFailProvisionalNavigation navigation:WKNavigation!,withError error:Error) {
+            failed(error)
+        }
+        func webView(_ webView:WKWebView,didFail navigation:WKNavigation!,withError error:Error) { failed(error) }
+        private func failed(_ error:Error) {
+            let code=(error as NSError).code
+            guard code != NSURLErrorCancelled else{return}
+            page.fail("Не удалось загрузить звонок. Код ошибки: \(code). Проверь соединение и адрес сервера.")
+        }
+        func webViewWebContentProcessDidTerminate(_ webView:WKWebView) {
+            page.fail("Экран звонка остановился. Нажми «Повторить».")
+        }
+        func webView(_ webView:WKWebView,decidePolicyFor response:WKNavigationResponse,
+                     decisionHandler:@escaping (WKNavigationResponsePolicy)->Void) {
+            if response.isForMainFrame,let http=response.response as? HTTPURLResponse,!(200..<300).contains(http.statusCode) {
+                page.fail("Сервер не открыл звонок: HTTP \(http.statusCode). Попробуй позвонить заново.")
+                decisionHandler(.cancel)
+            } else {decisionHandler(.allow)}
+        }
+        func webView(_ webView:WKWebView,decidePolicyFor action:WKNavigationAction,
+                     decisionHandler:@escaping (WKNavigationActionPolicy)->Void) {
+            guard let target=action.request.url,target.scheme=="https",
+                  target.host==url.host,target.port==url.port else {
+                decisionHandler(.cancel);return
+            }
+            decisionHandler(.allow)
+        }
         @available(iOS 15.0,*)
         func webView(_ webView:WKWebView,requestMediaCapturePermissionFor origin:WKSecurityOrigin,
                      initiatedByFrame frame:WKFrameInfo,type:WKMediaCaptureType,
-                     decisionHandler:@escaping (WKPermissionDecision)->Void){
-            if origin.protocol=="https" && origin.host=="chat.nightwell.fun" {
-                decisionHandler(.grant)
-            } else {
-                decisionHandler(.deny)
-            }
+                     decisionHandler:@escaping (WKPermissionDecision)->Void) {
+            let expectedPort=url.port ?? 443
+            let originPort=origin.port == 0 ? 443 : origin.port
+            decisionHandler(origin.protocol=="https" && origin.host==url.host && originPort==expectedPort ? .prompt : .deny)
         }
     }
 }
@@ -196,8 +334,7 @@ struct IncomingCallsView:View {
     @EnvironmentObject private var store:ChatStore
     @Environment(\.dismiss) private var dismiss
     @State private var calls:[VoiceCall]=[]
-    @State private var current:URL?
-    @State private var show=false
+    @State private var activeCall:CallPresentation?
     var body:some View {
         NavigationStack {
             List {
@@ -208,7 +345,7 @@ struct IncomingCallsView:View {
                             Button("Ответить"){
                                 Task{
                                     if let answer=await store.acceptCall(id:call.id),
-                                       let url=store.voiceURL(answer){current=url;show=true}
+                                       let url=store.voiceURL(answer){activeCall=CallPresentation(url:url)}
                                 }
                             }
                             Button("Отклонить",role:.destructive){
@@ -221,7 +358,7 @@ struct IncomingCallsView:View {
             .toolbar{ToolbarItem(placement:.topBarTrailing){Button("Готово"){dismiss()}}}
             .task{await reload()}
             .refreshable{await reload()}
-            .sheet(isPresented:$show){if let current {SafariCallView(url:current)}}
+            .fullScreenCover(item:$activeCall) { call in CallScreen(url:call.url) }
         }
     }
     func reload() async {calls=await store.pendingCalls()}

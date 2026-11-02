@@ -409,10 +409,8 @@ private struct InboxAvatar: View {
             }
         }.frame(width:60,height:60).clipShape(Circle())
             .task(id:"\(person?.id ?? 0)-\(person?.has_avatar ?? false)-\(store.eventVersion)") {
-                image=nil
-                if let person,person.has_avatar == true,let bytes=await store.loadAvatar(person.id) {
-                    image=UIImage(data:bytes)
-                }
+                if let person { image=await store.loadAvatar(person.id).flatMap { UIImage(data:$0) } }
+                else { image=nil }
             }
     }
 }
@@ -883,8 +881,8 @@ struct ChatView: View {
     @State private var audioPlayer: AVPlayer?
     @State private var playingAudioID: Int?
     @State private var audioEndObserver:NSObjectProtocol?
-    @State private var showingCall=false
-    @State private var callURL:URL?
+    @State private var activeCall: CallPresentation?
+    @State private var pendingProfileCall: CallPresentation?
     @State private var showingContactProfile=false
     @ViewBuilder
     private func messageRow(_ message: ChatMessage) -> some View {
@@ -1012,20 +1010,26 @@ struct ChatView: View {
                     Button("Файл",systemImage:"paperclip") { showingFilePicker=true }
                 } label: {
                     Image(systemName:"paperclip").font(.title2)
-                        .frame(width:38,height:42)
+                        .frame(width:48,height:48)
+                        .background(.ultraThinMaterial,in:Circle())
+                        .overlay(Circle().stroke(.white.opacity(0.16)))
                 }.disabled(uploading)
                 TextField("Сообщение",text:$draft,axis:.vertical)
                     .focused($composerFocused)
-                    .lineLimit(1...5).padding(12)
-                    .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:18))
+                    .lineLimit(1...5).padding(.horizontal,16).padding(.vertical,13)
+                    .frame(minHeight:48)
+                    .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:24))
+                    .overlay(RoundedRectangle(cornerRadius:24).stroke(.white.opacity(0.16)))
                 if !draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
                     Button { Task { await submit() } } label: {
                         Image(systemName:"arrow.up").font(.headline)
-                            .foregroundStyle(.black).frame(width:42,height:42).background(.white,in:Circle())
+                            .foregroundStyle(.black).frame(width:48,height:48).background(.white,in:Circle())
                     }
                 } else {
                     Image(systemName:voiceRecorder.isRecording ? "stop.circle.fill" : (recordingModeVideo ? "video.circle.fill" : "mic.fill"))
-                        .font(.title2).frame(width:42,height:42)
+                        .font(.title2).frame(width:48,height:48)
+                        .background(.ultraThinMaterial,in:Circle())
+                        .overlay(Circle().stroke(.white.opacity(0.16)))
                         .contentShape(Circle())
                         .gesture(DragGesture(minimumDistance:0)
                             .onChanged { _ in
@@ -1073,15 +1077,15 @@ struct ChatView: View {
                     .allowsHitTesting(!uploading)
                 }
             }
-            .padding(.horizontal,12).padding(.vertical,9)
-            .background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:30))
-            .overlay(RoundedRectangle(cornerRadius:30).stroke(.white.opacity(0.16)))
-            .padding(.horizontal,8).padding(.bottom,5)
+            .padding(.horizontal,10).padding(.vertical,8)
+            .padding(.bottom,5)
         }
         .background(NightwellBackground())
         .navigationTitle(chat.title)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented:$showingContactProfile) {
+        .sheet(isPresented:$showingContactProfile,onDismiss: {
+            if let pendingProfileCall { activeCall=pendingProfileCall; self.pendingProfileCall=nil }
+        }) {
             NavigationStack {
                 ScrollView {
                     VStack(spacing:16) {
@@ -1091,12 +1095,11 @@ struct ChatView: View {
                             Text(person.display_name).font(.title2.bold())
                             Text("@"+person.username).foregroundStyle(.secondary)
                             Button {
-                                showingContactProfile=false
                                 Task {
                                     if let call=await store.makeCall(to:person.id),
                                        let url=store.voiceURL(call) {
-                                        callURL=url
-                                        showingCall=true
+                                        pendingProfileCall=CallPresentation(url:url)
+                                        showingContactProfile=false
                                     }
                                 }
                             } label: {
@@ -1146,14 +1149,14 @@ struct ChatView: View {
                         Task {
                             if let call=await store.makeCall(to:person.id),
                                let url=store.voiceURL(call){
-                                callURL=url;showingCall=true
+                                activeCall=CallPresentation(url:url)
                             }
                         }
                     } label:{Image(systemName:"phone")}
                 }
             }
         }
-        .sheet(isPresented:$showingCall){if let callURL {SafariCallView(url:callURL)}}
+        .fullScreenCover(item:$activeCall) { call in CallScreen(url:call.url) }
         .fullScreenCover(isPresented:$showingVideoRecorder){
             VideoCircleRecorder(onVideo: { url in
                 Task {

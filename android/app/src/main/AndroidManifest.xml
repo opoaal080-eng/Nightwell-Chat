@@ -12,6 +12,7 @@
         <service android:name=".ChatPushService" android:exported="false">
             <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT"/></intent-filter>
         </service>
+        <activity android:name=".VideoCircleActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".CallActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>

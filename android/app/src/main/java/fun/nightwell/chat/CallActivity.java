@@ -12,6 +12,8 @@ import android.view.View;
 import java.util.ArrayList;
 public final class CallActivity extends Activity {
     private WebView web;
+    private TextView status;
+    private Button retry;
     private PermissionRequest waiting;
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;
@@ -22,7 +24,10 @@ public final class CallActivity extends Activity {
         LinearLayout box=new LinearLayout(this); box.setOrientation(1);box.setBackgroundColor(0xff080808);
         Button close=new Button(this);close.setText("Завершить звонок");box.addView(close);
         close.setOnClickListener(v->endCall());
-        web=new WebView(this);box.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(box);
+        status=new TextView(this);status.setTextColor(-1);status.setText("Открываем звонок…");box.addView(status);
+        retry=new Button(this);retry.setText("Повторить");retry.setVisibility(View.GONE);box.addView(retry);
+        retry.setOnClickListener(v->{retry.setVisibility(View.GONE);status.setText("Загрузка…");web.reload();});
+        web=new WebView(this);web.setBackgroundColor(0xff080808);box.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(box);
         web.setWebChromeClient(new WebChromeClient(){
             @Override public void onPermissionRequest(PermissionRequest req){
                 runOnUiThread(()->{
@@ -51,10 +56,14 @@ public final class CallActivity extends Activity {
         web.getSettings().setAllowContentAccess(false);
         web.getSettings().setMediaPlaybackRequiresUserGesture(false);
         web.setWebViewClient(new WebViewClient(){
+            @Override public void onReceivedHttpError(WebView view,WebResourceRequest request,WebResourceResponse response){if(request.isForMainFrame())showError("Сервер не открыл звонок: HTTP "+response.getStatusCode());}
             @Override public void onPageFinished(WebView view,String url){
                 super.onPageFinished(view,url);
                 if(url.startsWith("https://chat.nightwell.fun/calls/")&&!ending){
-                    view.evaluateJavascript("document.visibilityState",ignored->{});
+                    view.evaluateJavascript("Boolean(document.getElementById('start') && document.getElementById('state'))",result->{
+                        if("true".equals(result)){status.setVisibility(View.GONE);retry.setVisibility(View.GONE);}
+                        else showError("Сервер вернул другую страницу вместо звонка");
+                    });
                 }
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){
@@ -63,7 +72,7 @@ public final class CallActivity extends Activity {
             }
             @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error){
                 if(request.isForMainFrame()&&!isFinishing()){
-                    Toast.makeText(CallActivity.this,"Соединение потеряно. Проверь интернет.",Toast.LENGTH_LONG).show();
+                    showError("Не удалось загрузить звонок. Проверь интернет.");
                 }
             }
         });
@@ -83,7 +92,7 @@ public final class CallActivity extends Activity {
                         networkLost=false;
                         Toast.makeText(CallActivity.this,"Сеть восстановлена. Проверяем звонок.",Toast.LENGTH_SHORT).show();
                         if(web!=null)web.evaluateJavascript(
-                            "if(typeof pc!=='undefined' && pc && pc.connectionState==='failed' && typeof restartIce==='function')restartIce();",
+                            "if(typeof restartIce==='function')restartIce();",
                             ignored->{});
                     });
                 }
@@ -93,6 +102,7 @@ public final class CallActivity extends Activity {
         String u=getIntent().getStringExtra("url");
         if(u!=null && u.startsWith("https://chat.nightwell.fun/calls/"))web.loadUrl(u);else finish();
     }
+    private void showError(String text){status.setVisibility(View.VISIBLE);status.setText(text);retry.setVisibility(View.VISIBLE);}
     private void grantMedia(PermissionRequest req){
         ArrayList<String> allowed=new ArrayList<>();
         for(String resource:req.getResources()){

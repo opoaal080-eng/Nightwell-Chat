@@ -39,6 +39,13 @@ public final class MainActivity extends Activity {
     LinearLayout page, messages;
     ScrollView scroller;
     boolean loading=false;
+    JSONArray cachedChats=new JSONArray();
+    String inboxQuery=""; boolean personalOnly=false;
+    final java.util.TreeMap<Integer,JSONObject> messageCache=new java.util.TreeMap<>();
+    int replyId=-1,lastRenderedId=0; String replyName="";
+    TextView replyBanner; EditText composer;
+    boolean videoMode=false,mediaHeld=false;
+    final java.util.Set<Integer> selectedPeople=new java.util.HashSet<>();
     MediaRecorder voiceRecorder;
     File voiceFile;
     Button voiceButton;
@@ -92,7 +99,7 @@ public final class MainActivity extends Activity {
     void btn(String str,Runnable r){Button b=new Button(this);b.setAllCaps(false);b.setText(str);b.setTextColor(FG);b.setBackground(shape(PANEL));
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(48));lp.setMargins(0,dp(5),0,dp(5));page.addView(b,lp);b.setOnClickListener(v->r.run());}
     void note(String s){runOnUiThread(()->new AlertDialog.Builder(this).setTitle("Nightwell Chat").setMessage(s).setPositiveButton("ОК",null).show());}
-    void perform(Job j,Done done){network.execute(()->{try{byte[] b=j.call();runOnUiThread(()->{try{done.accept(b);}catch(Exception x){note(x.toString());}});}catch(Exception x){note(x.getMessage()==null?x.toString():x.getMessage());}});}
+    void perform(Job j,Done done){network.execute(()->{try{byte[] b=j.call();runOnUiThread(()->{try{done.accept(b);}catch(Exception x){note(x.toString());}});}catch(Exception x){runOnUiThread(()->loading=false);note(x.getMessage()==null?x.toString():x.getMessage());}});}
     JSONObject payload(String... args)throws Exception{JSONObject o=new JSONObject();for(int i=0;i+1<args.length;i+=2)o.put(args[i],args[i+1]);return o;}
     byte[] read(InputStream stream,int max)throws Exception{
         try(InputStream in=stream;ByteArrayOutputStream out=new ByteArrayOutputStream()){
@@ -106,7 +113,7 @@ public final class MainActivity extends Activity {
         URL url=new URL(HOST+path);
         HttpURLConnection c=(HttpURLConnection)url.openConnection();
         try{
-            c.setConnectTimeout(20000);c.setReadTimeout(body!=null && mime.startsWith("multipart/")?180000:45000);c.setRequestMethod(method);
+            c.setUseCaches(false);c.setConnectTimeout(20000);c.setReadTimeout(body!=null && mime.startsWith("multipart/")?180000:45000);c.setRequestMethod(method);
             if(!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);
             if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type",mime);c.setFixedLengthStreamingMode(body.length);try(OutputStream o=c.getOutputStream()){o.write(body);}}
             int status=c.getResponseCode();InputStream input=status>=400?c.getErrorStream():c.getInputStream();
@@ -186,28 +193,87 @@ public final class MainActivity extends Activity {
         ChatPushService.refreshToken(this);
         if(toProfile)profile();else inbox();
     });}
-    void inbox(){enter("inbox");heading("Чаты");
-        btn("＋ Новый чат",this::search);
-        btn("Мой профиль",this::profile);
-        LinearLayout list=new LinearLayout(this);list.setOrientation(1);page.addView(list);list.setTag("list");
-        LinearLayout incoming=new LinearLayout(this);incoming.setOrientation(1);page.addView(incoming);incoming.setTag("incoming");
+    Button compact(String text,Runnable action){
+        Button b=new Button(this);b.setText(text);b.setTextColor(FG);b.setAllCaps(false);b.setTextSize(14);
+        b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(4),0,dp(4),0);b.setBackground(shape(PANEL));b.setOnClickListener(v->action.run());return b;
+    }
+    void inbox(){
+        enter("inbox");page.setPadding(dp(12),dp(8),dp(12),dp(8));
+        LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title=label("Чаты",24,FG);header.addView(title,new LinearLayout.LayoutParams(0,dp(52),1));
+        header.addView(compact("＋ Группа",this::createGroupScreen));header.addView(compact("✎",this::search));page.addView(header);
+        LinearLayout filters=new LinearLayout(this);
+        filters.addView(compact("Все",()->{personalOnly=false;renderChats();}),new LinearLayout.LayoutParams(0,dp(44),1));
+        filters.addView(compact("Личные",()->{personalOnly=true;renderChats();}),new LinearLayout.LayoutParams(0,dp(44),1));page.addView(filters);
+        EditText query=field("Поиск чатов",false);query.setText(inboxQuery);
+        query.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence t,int a,int c,int d){}public void onTextChanged(CharSequence t,int a,int b,int c){inboxQuery=t.toString();renderChats();}public void afterTextChanged(android.text.Editable e){}});
+        LinearLayout incoming=new LinearLayout(this);incoming.setOrientation(1);incoming.setTag("incoming");page.addView(incoming);
+        LinearLayout list=new LinearLayout(this);list.setOrientation(1);list.setTag("list");
+        ScrollView chatScroll=new ScrollView(this);chatScroll.addView(list);page.addView(chatScroll,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout dock=new LinearLayout(this);
+        dock.addView(compact("Контакты",this::search),new LinearLayout.LayoutParams(0,dp(58),1));
+        dock.addView(compact("Звонки",this::callsScreen),new LinearLayout.LayoutParams(0,dp(58),1));
+        dock.addView(compact("Чаты",this::inbox),new LinearLayout.LayoutParams(0,dp(58),1));
+        dock.addView(compact("Настройки",this::profile),new LinearLayout.LayoutParams(0,dp(58),1));page.addView(dock);
+        scroller.removeView(page);setContentView(page);
         loadChats();checkIncoming();handler.postDelayed(refresh,6500);
     }
     void loadChats(){if(!"inbox".equals(screen))return;perform(()->http("/chats","GET",null),b->{
-        if(!"inbox".equals(screen))return;
-        LinearLayout list=(LinearLayout)page.findViewWithTag("list");if(list==null)return;
-        list.removeAllViews();JSONArray arr=array(b);
-        if(arr.length()==0)list.addView(label("Переписок ещё нет. Найди друга по имени или номеру.",16,MUTED));
-        for(int i=0;i<arr.length();i++){
-            JSONObject ch=arr.getJSONObject(i);int id=ch.getInt("id");String title=ch.optString("title");
-            JSONObject person=ch.optJSONObject("other_user");int target=person==null?-1:person.optInt("id",-1);
-            JSONObject last=ch.optJSONObject("last_message");String preview=last==null?"":last.optString("body");
-            Button item=new Button(this);item.setAllCaps(false);item.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);
-            item.setText(title+(preview.isEmpty()?"":"\n"+preview));item.setTextColor(FG);item.setBackground(shape(PANEL));
-            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(76));p.setMargins(0,dp(6),0,0);list.addView(item,p);
-            item.setOnClickListener(v->{chatId=id;otherId=target;chatTitle=title;chat();});
-        }
+        if(!"inbox".equals(screen))return;cachedChats=array(b);renderChats();
     });}
+    void renderChats(){
+        if(!"inbox".equals(screen))return;
+        LinearLayout list=page.findViewWithTag("list");if(list==null)return;list.removeAllViews();
+        String q=inboxQuery.trim().toLowerCase(java.util.Locale.ROOT);
+        for(int i=0;i<cachedChats.length();i++){
+            JSONObject ch=cachedChats.optJSONObject(i);if(ch==null)continue;
+            if(personalOnly&&"group".equals(ch.optString("kind")))continue;
+            String title=ch.optString("title");JSONObject last=ch.optJSONObject("last_message");
+            String preview=last==null?"Новый чат":last.optString("body");if(preview.isEmpty())preview="Вложение";
+            if(!q.isEmpty()&&!(title+" "+preview).toLowerCase(java.util.Locale.ROOT).contains(q))continue;
+            JSONObject person=ch.optJSONObject("other_user");int target=person==null?-1:person.optInt("id",-1),id=ch.optInt("id");
+            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(0,dp(10),0,dp(10));
+            row.addView(avatar(target,title),new LinearLayout.LayoutParams(dp(56),dp(56)));
+            LinearLayout words=new LinearLayout(this);words.setOrientation(1);words.setPadding(dp(10),0,0,0);
+            TextView name=label(title,18,FG);name.setTypeface(null,1);words.addView(name);
+            TextView sub=label(preview,15,MUTED);sub.setMaxLines(1);sub.setEllipsize(android.text.TextUtils.TruncateAt.END);words.addView(sub);
+            row.addView(words,new LinearLayout.LayoutParams(0,-2,1));
+            String date=last==null?"":last.optString("created_at");if(date.length()>=10)date=date.substring(8,10)+"."+date.substring(5,7);else date="";
+            int unread=ch.optInt("unread");row.addView(label(date+(unread>0?"\n● "+unread:""),12,MUTED));
+            row.setOnClickListener(v->{chatId=id;otherId=target;chatTitle=title;chat();});
+            row.setOnLongClickListener(v->{if(last!=null)perform(()->http("/chats/"+id+"/read","POST",new JSONObject().put("message_id",last.optInt("id"))),ok->loadChats());return true;});
+            list.addView(row);View line=new View(this);line.setBackgroundColor(0xff222222);list.addView(line,new LinearLayout.LayoutParams(-1,dp(1)));
+        }
+        if(list.getChildCount()==0)list.addView(label("Чаты не найдены",16,MUTED));
+    }
+    View avatar(int id,String name){
+        FrameLayout box=new FrameLayout(this);GradientDrawable bg=new GradientDrawable();bg.setShape(GradientDrawable.OVAL);
+        int[] colors={0xffb17539,0xffa534c1,0xff43a6b7,0xff507de0,0xff509a63};bg.setColor(colors[Math.floorMod(name.hashCode(),colors.length)]);box.setBackground(bg);box.setClipToOutline(true);
+        TextView letter=label(name.isEmpty()?"?":name.substring(0,1),26,FG);letter.setGravity(Gravity.CENTER);box.addView(letter,new FrameLayout.LayoutParams(-1,-1));
+        ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);box.addView(image,new FrameLayout.LayoutParams(-1,-1));
+        if(id>0)network.execute(()->{try{byte[] bytes=http("/users/"+id+"/avatar","GET",null);Bitmap b=BitmapFactory.decodeByteArray(bytes,0,bytes.length);runOnUiThread(()->{if(b!=null)image.setImageBitmap(b);});}catch(Exception ignored){}});
+        return box;
+    }
+    void createGroupScreen(){
+        selectedPeople.clear();enter("group");heading("Новая группа");btn("← К чатам",this::inbox);
+        EditText title=field("Название группы",false),query=field("Имя или логин участника",false);
+        LinearLayout results=new LinearLayout(this);results.setOrientation(1);
+        btn("Найти",()->perform(()->http("/users?q="+Uri.encode(query.getText().toString()),"GET",null),b->{
+            if(!"group".equals(screen))return;results.removeAllViews();JSONArray people=array(b);
+            for(int i=0;i<people.length();i++){JSONObject person=people.getJSONObject(i);int id=person.optInt("id");if(id==meId)continue;
+                CheckBox check=new CheckBox(this);check.setText(person.optString("display_name")+" @"+person.optString("username"));check.setTextColor(FG);check.setChecked(selectedPeople.contains(id));
+                check.setOnCheckedChangeListener((v,on)->{if(on)selectedPeople.add(id);else selectedPeople.remove(id);});results.addView(check);
+            }
+        }));page.addView(results);
+        btn("Создать группу",()->{String name=title.getText().toString().trim();if(name.isEmpty()||selectedPeople.isEmpty()){note("Укажи название и выбери участников");return;}
+            JSONArray ids=new JSONArray();for(int id:selectedPeople)ids.put(id);
+            perform(()->http("/chats/groups","POST",new JSONObject().put("title",name).put("user_ids",ids)),b->{JSONObject ch=json(b);chatId=ch.getInt("id");chatTitle=ch.optString("title");otherId=-1;chat();});
+        });
+    }
+    void callsScreen(){enter("calls");heading("Звонки");btn("← К чатам",this::inbox);hint("Входящие звонки");
+        LinearLayout incoming=new LinearLayout(this);incoming.setOrientation(1);incoming.setTag("incoming");page.addView(incoming);
+        btn("Обновить",this::checkIncoming);checkIncoming();handler.postDelayed(refresh,6500);
+    }
     void search(){enter("search");heading("Новый чат");btn("← К чатам",this::inbox);
         EditText nick=field("Имя или логин",false);
         btn("Найти пользователя",()->perform(()->http("/users?q="+Uri.encode(nick.getText().toString()),"GET",null),b->{
@@ -243,6 +309,7 @@ public final class MainActivity extends Activity {
         enter("contact_profile");
         btn("← Назад к переписке",this::chat);
         heading(chatTitle);
+        page.addView(avatar(otherId,chatTitle),new LinearLayout.LayoutParams(dp(96),dp(96)));
         hint("Профиль собеседника");
         if(otherId>0)hint("ID пользователя: "+otherId);
         if(otherId>0) {
@@ -252,45 +319,55 @@ public final class MainActivity extends Activity {
     }
     @Override public void onBackPressed(){
         if("contact_profile".equals(screen)){chat();return;}
-        if("chat".equals(screen)){inbox();return;}
+        if(!"login".equals(screen)&&!"inbox".equals(screen)){inbox();return;}
         super.onBackPressed();
     }
-    void chat(){enter("chat");heading(chatTitle);
-        LinearLayout incoming=new LinearLayout(this);incoming.setOrientation(1);
-        incoming.setTag("incoming");page.addView(incoming);
-        checkIncoming();
-        if(otherId>0)btn("Открыть профиль собеседника",this::contactProfile);
-        btn("← Список чатов",this::inbox);
-        if(otherId>0)btn("Позвонить",this::startCall);
-        messages=new LinearLayout(this);messages.setOrientation(1);page.addView(messages);
-        EditText draft=field("Напиши сообщение...",false);
-        btn("Отправить",()->{String msg=draft.getText().toString().trim();if(msg.isEmpty())return;
-            int cid=chatId;perform(()->http("/chats/"+cid+"/messages","POST",payload("body",msg)),b->{draft.setText("");loadMessages(true);});
+    void chat(){
+        enter("chat");messageCache.clear();lastRenderedId=0;replyId=-1;loading=false;
+        page.setPadding(dp(10),dp(8),dp(10),dp(8));
+        LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(compact("‹",this::inbox),new LinearLayout.LayoutParams(dp(44),dp(48)));
+        TextView title=label(chatTitle,20,FG);title.setMaxLines(1);title.setOnClickListener(v->contactProfile());header.addView(title,new LinearLayout.LayoutParams(0,dp(48),1));
+        if(otherId>0)header.addView(compact("☎",this::startCall),new LinearLayout.LayoutParams(dp(48),dp(48)));page.addView(header);
+        LinearLayout incoming=new LinearLayout(this);incoming.setOrientation(1);incoming.setTag("incoming");page.addView(incoming);
+        ScrollView outer=scroller;outer.removeView(page);
+        scroller=new ScrollView(this);scroller.setFillViewport(true);
+        messages=new LinearLayout(this);messages.setOrientation(1);scroller.addView(messages);
+        page.addView(scroller,new LinearLayout.LayoutParams(-1,0,1));
+        replyBanner=label("",13,MUTED);replyBanner.setVisibility(View.GONE);replyBanner.setOnClickListener(v->{replyId=-1;replyBanner.setVisibility(View.GONE);});page.addView(replyBanner);
+        LinearLayout compose=new LinearLayout(this);compose.setGravity(Gravity.BOTTOM);
+        Button attach=compact("＋",()->new AlertDialog.Builder(this).setTitle("Вложение").setItems(new String[]{"Фото","Файл","Видеокружок"},(d,n)->{
+            if(n==2){captureVideo();return;}Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);pick.addCategory(Intent.CATEGORY_OPENABLE);pick.setType(n==0?"image/*":"*/*");startActivityForResult(pick,PICK_ATTACHMENT);
+        }).show());
+        compose.addView(attach,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        composer=new EditText(this);composer.setTextColor(FG);composer.setHintTextColor(MUTED);composer.setHint("Сообщение");
+        composer.setMaxLines(5);composer.setTextSize(16);composer.setInputType(1|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        composer.setPadding(dp(14),dp(10),dp(14),dp(10));composer.setBackground(shape(PANEL));
+        LinearLayout.LayoutParams input=new LinearLayout.LayoutParams(0,-2,1);input.setMargins(dp(8),0,dp(8),0);compose.addView(composer,input);
+        voiceButton=compact("🎤",()->{});
+        compose.addView(voiceButton,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        composer.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence t,int a,int c,int d){}public void onTextChanged(CharSequence t,int a,int b,int c){voiceButton.setText(t.toString().trim().isEmpty()?(videoMode?"◉":"🎤"):"↑");}public void afterTextChanged(android.text.Editable e){}});
+        voiceButton.setOnClickListener(v->{if(!composer.getText().toString().trim().isEmpty()){sendDraft();return;}videoMode=!videoMode;voiceButton.setText(videoMode?"◉":"🎤");});
+        voiceButton.setOnLongClickListener(v->{
+            if(!composer.getText().toString().trim().isEmpty())return false;
+            if(videoMode){captureVideo();return true;}
+            if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},102);return true;}
+            mediaHeld=true;startVoice();return true;
         });
-        voiceButton=new Button(this);
-        voiceButton.setAllCaps(false);
-        voiceButton.setText("🎤 Записать голосовое");
-        voiceButton.setTextColor(FG);
-        voiceButton.setBackground(shape(PANEL));
-        page.addView(voiceButton,new LinearLayout.LayoutParams(-1,dp(48)));
-        voiceButton.setOnClickListener(v->{
-            if(voiceRecorder!=null)finishVoice();
-            else if(Build.VERSION.SDK_INT>=23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)
-                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},102);
-            else startVoice();
-        });
-        btn("◉ Записать видеосообщение",()->{
-            Intent camera=new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
-            camera.putExtra(MediaStore.EXTRA_DURATION_LIMIT,60);
-            camera.putExtra(MediaStore.EXTRA_VIDEO_QUALITY,0);
-            if(camera.resolveActivity(getPackageManager())!=null)startActivityForResult(camera,CAPTURE_VIDEO);
-            else note("На устройстве нет приложения для записи видео");
-        });
-        btn("＋ Фото или файл",()->{
-            Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);pick.addCategory(Intent.CATEGORY_OPENABLE);pick.setType("*/*");
-            startActivityForResult(pick,PICK_ATTACHMENT);
-        });
-        loadMessages(true);handler.postDelayed(refresh,6500);
+        voiceButton.setOnTouchListener((v,event)->{if(mediaHeld&&(event.getAction()==MotionEvent.ACTION_UP||event.getAction()==MotionEvent.ACTION_CANCEL)){mediaHeld=false;if(voiceRecorder!=null){if(event.getAction()==MotionEvent.ACTION_CANCEL)cancelVoice();else finishVoice();}return true;}return false;});
+        page.addView(compose);setContentView(page);loadMessages(true);checkIncoming();handler.postDelayed(refresh,6500);
+    }
+    void sendDraft(){
+        String body=composer.getText().toString().trim();if(body.isEmpty())return;int cid=chatId,rid=replyId;
+        Button send=voiceButton;send.setEnabled(false);
+        network.execute(()->{try{
+            JSONObject data=payload("body",body);if(rid>0)data.put("reply_to",rid);http("/chats/"+cid+"/messages","POST",data);
+            runOnUiThread(()->{send.setEnabled(true);if("chat".equals(screen)&&chatId==cid){composer.setText("");replyId=-1;replyBanner.setVisibility(View.GONE);loadMessages(true);}});
+        }catch(Exception e){runOnUiThread(()->send.setEnabled(true));note(e.getMessage());}});
+    }
+    void captureVideo(){
+        Intent camera=new Intent(this,VideoCircleActivity.class);
+        startActivityForResult(camera,CAPTURE_VIDEO);
     }
     void startVoice(){
         try{
@@ -307,12 +384,12 @@ public final class MainActivity extends Activity {
             voiceStartedAt=System.currentTimeMillis();
             voiceHandler.postDelayed(voiceTimeout,120000);
             if(voiceButton!=null)voiceButton.setText("■ Отправить голосовое");
-            note("Запись началась. Нажми ещё раз, чтобы отправить.");
+            if(voiceButton!=null)voiceButton.setText("■");
         }catch(Exception e){note("Ошибка микрофона: "+e.getMessage());cancelVoice();}
     }
     void releaseVoice(){
         voiceHandler.removeCallbacks(voiceTimeout);
-        if(voiceButton!=null)voiceButton.setText("🎤 Записать голосовое");
+        if(voiceButton!=null)voiceButton.setText(videoMode?"◉":"🎤");
         if(voiceRecorder!=null){try{voiceRecorder.release();}catch(Exception ignored){} voiceRecorder=null;}
     }
     void cancelVoice(){
@@ -322,7 +399,7 @@ public final class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){
         super.onRequestPermissionsResult(requestCode,permissions,grantResults);
         if(requestCode==102){
-            if(grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED && "chat".equals(screen))startVoice();
+            if(grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED && "chat".equals(screen))note("Микрофон разрешён. Удерживай кнопку для записи.");
             else note("Для голосовых сообщений нужен доступ к микрофону");
         }
     }
@@ -343,20 +420,48 @@ public final class MainActivity extends Activity {
             },result->loadMessages(true));
         }catch(Exception e){note("Не удалось завершить запись: "+e.getMessage());cancelVoice();}
     }
-    void loadMessages(boolean scroll){if(loading||!"chat".equals(screen))return;loading=true;int cid=chatId;
-        perform(()->http("/chats/"+cid+"/messages","GET",null),b->{
+    void loadMessages(boolean scroll){fetchMessages(scroll,false);}
+    void fetchMessages(boolean scroll,boolean older){
+        if(loading||!"chat".equals(screen))return;loading=true;int cid=chatId;
+        String path="/chats/"+cid+"/messages"+(older&&!messageCache.isEmpty()?"?before="+messageCache.firstKey():"");
+        network.execute(()->{try{JSONArray data=array(http(path,"GET",null));runOnUiThread(()->{
             loading=false;if(!"chat".equals(screen)||cid!=chatId)return;
-            messages.removeAllViews();JSONArray data=array(b);
-            for(int i=0;i<data.length();i++){
-                JSONObject m=data.getJSONObject(i);
-                if(m.optInt("deleted")!=0)continue;
-                messages.addView(label(m.optString("sender_name"),13,MUTED));
-                String message=m.optString("body");if(!message.isEmpty())messages.addView(bubble(message));
-                JSONObject attachment=m.optJSONObject("attachment");if(attachment!=null)showAttachment(attachment);
-            }
-            if(scroll)scroller.post(()->scroller.fullScroll(View.FOCUS_DOWN));
-        });
+            for(int i=0;i<data.length();i++){JSONObject m=data.optJSONObject(i);if(m!=null)messageCache.put(m.optInt("id"),m);}
+            renderMessages(scroll);if(!messageCache.isEmpty()){int last=messageCache.lastKey();network.execute(()->{try{http("/chats/"+cid+"/read","POST",new JSONObject().put("message_id",last));}catch(Exception ignored){}});}
+        });}catch(Exception e){runOnUiThread(()->loading=false);note(e.getMessage());}});
     }
+    void renderMessages(boolean scroll){
+        int previous=lastRenderedId;int y=scroller.getScrollY();messages.removeAllViews();
+        if(!messageCache.isEmpty()){Button more=compact("Загрузить ранние",()->fetchMessages(false,true));messages.addView(more);}
+        for(JSONObject m:messageCache.values()){
+            if(m.optInt("deleted")!=0)continue;
+            int id=m.optInt("id");boolean mine=m.optInt("sender_id")==meId;
+            LinearLayout item=new LinearLayout(this);item.setOrientation(1);item.setGravity(mine?Gravity.END:Gravity.START);
+            TextView sender=label(m.optString("sender_name"),12,MUTED);item.addView(sender);
+            if(m.optInt("reply_to")>0){JSONObject original=messageCache.get(m.optInt("reply_to"));item.addView(label("↪ "+(original==null?"Ответ на сообщение":original.optString("body")),12,MUTED));}
+            if(!m.optString("body").isEmpty()){TextView body=bubble(m.optString("body"));body.setBackground(shape(mine?0xff26384d:PANEL));item.addView(body);body.setOnLongClickListener(v->{messageActions(m);return true;});}
+            item.setOnLongClickListener(v->{messageActions(m);return true;});messages.addView(item);
+            JSONObject attachment=m.optJSONObject("attachment");if(attachment!=null)showAttachment(attachment);
+            JSONArray reactions=m.optJSONArray("reactions");if(reactions!=null&&reactions.length()>0){StringBuilder text=new StringBuilder();for(int j=0;j<reactions.length();j++){JSONObject r=reactions.optJSONObject(j);if(r!=null)text.append(r.optString("emoji")).append(" ").append(r.optInt("count")).append("  ");}TextView reaction=label(text.toString(),16,FG);messages.addView(reaction);reaction.setOnClickListener(v->pickReaction(id));}
+            String date=m.optString("created_at");TextView time=label((date.length()>=16?date.substring(11,16):"")+(m.optString("edited_at","").equals("null")||m.isNull("edited_at")?"":" · изменено"),10,MUTED);messages.addView(time);
+            if(previous>0&&id>previous){item.setAlpha(0);item.setTranslationY(dp(18));item.animate().alpha(1).translationY(0).setDuration(240).start();}
+        }
+        if(!messageCache.isEmpty())lastRenderedId=messageCache.lastKey();
+        if(scroll)scroller.post(()->scroller.fullScroll(View.FOCUS_DOWN));else scroller.post(()->scroller.scrollTo(0,y));
+    }
+    void messageActions(JSONObject m){
+        boolean mine=m.optInt("sender_id")==meId;
+        String[] options=mine?new String[]{"Ответить","Реакция","Копировать","Изменить","Удалить"}:new String[]{"Ответить","Реакция","Копировать"};
+        int id=m.optInt("id");new AlertDialog.Builder(this).setItems(options,(dialog,n)->{
+            if(n==0){replyId=id;replyName=m.optString("sender_name");replyBanner.setText("↪ "+replyName+": "+m.optString("body")+"   ✕");replyBanner.setVisibility(View.VISIBLE);composer.requestFocus();}
+            if(n==1)pickReaction(id);
+            if(n==2)((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Сообщение",m.optString("body")));
+            if(n==3){EditText edit=new EditText(this);edit.setText(m.optString("body"));new AlertDialog.Builder(this).setTitle("Изменить сообщение").setView(edit).setNegativeButton("Отмена",null).setPositiveButton("Сохранить",(d,w)->perform(()->http("/messages/"+id,"PATCH",payload("body",edit.getText().toString())),b->{messageCache.put(id,json(b));renderMessages(false);})).show();}
+            if(n==4)new AlertDialog.Builder(this).setMessage("Удалить сообщение?").setNegativeButton("Отмена",null).setPositiveButton("Удалить",(d,w)->perform(()->http("/messages/"+id,"DELETE",null),b->{messageCache.remove(id);renderMessages(false);})).show();
+        }).show();
+    }
+    void pickReaction(int id){String[] emoji={"❤️","🔥","👍","😂","😮","😢"};new AlertDialog.Builder(this).setTitle("Реакция").setItems(emoji,(d,n)->perform(()->http("/messages/"+id+"/reactions","POST",payload("emoji",emoji[n])),b->{messageCache.put(id,json(b));renderMessages(false);})).show();}
+
     TextView bubble(String text){TextView t=label(text,17,FG);t.setPadding(dp(15),dp(11),dp(15),dp(11));t.setBackground(shape(PANEL));
         LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.setMargins(0,dp(4),0,dp(9));t.setLayoutParams(p);return t;}
     void showAttachment(JSONObject attachment){
@@ -551,6 +656,7 @@ public final class MainActivity extends Activity {
     void profile(){enter("profile");heading("Профиль");btn("← К чатам",this::inbox);
         if(myself==null)return;
         hint("@"+myself.optString("username"));
+        hint("Nightwell Chat 0.11.4");
         ImageView avatar=new ImageView(this);avatar.setAdjustViewBounds(true);avatar.setMaxHeight(dp(160));
         avatar.setImageResource(android.R.drawable.sym_def_app_icon);
         page.addView(avatar,new LinearLayout.LayoutParams(dp(120),dp(120)));
@@ -567,6 +673,10 @@ public final class MainActivity extends Activity {
         perform(()->http("/me/phone","GET",null),b->{
             if(!"profile".equals(screen))return;JSONObject settings=json(b);
             hint("Номер: "+settings.optString("phone","не привязан"));
+            if(settings.isNull("phone")||settings.optString("phone").isEmpty()){
+                EditText number=field("+79991234567",false);number.setInputType(3);EditText password=field("Пароль аккаунта",true);
+                btn("Привязать номер",()->perform(()->http("/me/phone/link","POST",payload("phone",number.getText().toString(),"password",password.getText().toString()).put("discoverable",false)),ok->profile()));
+            }
             CheckBox discoverable=new CheckBox(this);discoverable.setTextColor(FG);
             discoverable.setText("Разрешить поиск по номеру");discoverable.setChecked(settings.optBoolean("discoverable"));
             page.addView(discoverable);
@@ -578,9 +688,9 @@ public final class MainActivity extends Activity {
         });
     }
     void startCall(){int id=otherId;if(id<=0)return;perform(()->http("/calls/direct/"+id,"POST",null),b->openCall(json(b)));}
-    void checkIncoming(){if(!"inbox".equals(screen)&&!"chat".equals(screen))return;
+    void checkIncoming(){if(!"inbox".equals(screen)&&!"chat".equals(screen)&&!"calls".equals(screen))return;
         perform(()->http("/calls/pending","GET",null),b->{
-            if(!"inbox".equals(screen)&&!"chat".equals(screen))return;
+            if(!"inbox".equals(screen)&&!"chat".equals(screen)&&!"calls".equals(screen))return;
             LinearLayout row=(LinearLayout)page.findViewWithTag("incoming");if(row==null)return;row.removeAllViews();
             JSONArray pending=array(b);
             for(int i=0;i<pending.length();i++){
@@ -621,10 +731,20 @@ public final class MainActivity extends Activity {
             if(avatar){
                 Bitmap bitmap=BitmapFactory.decodeByteArray(data,0,data.length);
                 if(bitmap==null)throw new IOException("Это не изображение");
+                android.media.ExifInterface exif=new android.media.ExifInterface(new ByteArrayInputStream(data));
+                int orientation=exif.getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION,1);
+                android.graphics.Matrix matrix=new android.graphics.Matrix();
+                if(orientation==3)matrix.postRotate(180);else if(orientation==6)matrix.postRotate(90);else if(orientation==8)matrix.postRotate(270);
+                bitmap=Bitmap.createBitmap(bitmap,0,0,bitmap.getWidth(),bitmap.getHeight(),matrix,true);
+                int side=Math.min(bitmap.getWidth(),bitmap.getHeight());
+                bitmap=Bitmap.createBitmap(bitmap,(bitmap.getWidth()-side)/2,(bitmap.getHeight()-side)/2,side,side);
+                bitmap=Bitmap.createScaledBitmap(bitmap,512,512,true);
                 ByteArrayOutputStream jpg=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.JPEG,85,jpg);
                 data=jpg.toByteArray();name="avatar.jpg";mime="image/jpeg";
             }
-            return multipart(avatar?"/me/avatar":"/chats/"+cid+"/attachments",name,mime,data);
+            byte[] response=multipart(avatar?"/me/avatar":"/chats/"+cid+"/attachments",name,mime,data);
+            if(avatar){byte[] verified=http("/users/"+meId+"/avatar","GET",null);if(BitmapFactory.decodeByteArray(verified,0,verified.length)==null)throw new IOException("Сервер не вернул сохранённое фото");}
+            return response;
         },ok->{if(avatar)getMe(true);else loadMessages(true);});
     }
     void uploadVideo(Uri uri){

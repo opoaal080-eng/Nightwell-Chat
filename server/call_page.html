@@ -54,6 +54,10 @@ async function connect(){
 async function ensurePeer(){
  if(peer)return;
  const cfg={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
+ // Optional TURN relay: injected by the server only when configured.
+ if(window.NIGHTWELL_ICE_SERVERS&&Array.isArray(window.NIGHTWELL_ICE_SERVERS)){
+  cfg.iceServers=window.NIGHTWELL_ICE_SERVERS;
+ }
  peer=new RTCPeerConnection(cfg);
  peer.onicecandidate=e=>{if(e.candidate)send('ice',e.candidate.toJSON())};
  peer.ontrack=e=>{audio.srcObject=e.streams[0];audio.play().catch(()=>text('Нажми экран, чтобы включить звук'))};

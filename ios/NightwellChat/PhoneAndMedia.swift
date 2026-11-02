@@ -281,8 +281,12 @@ struct CallScreen: View {
                 if page.loading {ProgressView().tint(.white)}
                 if page.failure != nil {
                     Button("Повторить") {
-                        page.failure=nil;page.loading=true;page.webReady=false;page.started=false
-                        attempt += 1
+                        page.failure=nil
+                        if page.webReady {page.startAudioIfReady()}
+                        else {
+                            page.loading=true;page.webReady=false;page.started=false
+                            attempt += 1
+                        }
                     }.buttonStyle(.borderedProminent)
                 }
                 Spacer()
@@ -369,6 +373,12 @@ struct SafariCallView:UIViewRepresentable {
             switch kind {
             case "ended": page.ended=true
             case "state": if let value=data["message"] as? String {page.status=value}
+            case "microphone_error":
+                page.started=false
+                page.fail((data["message"] as? String) ?? "Не удалось включить микрофон")
+            case "microphone_ready":
+                page.started=true
+                page.failure=nil
             case "mute": page.muted=(data["message"] as? String)=="on"
             default: break
             }

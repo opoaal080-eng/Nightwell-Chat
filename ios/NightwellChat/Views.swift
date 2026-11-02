@@ -873,7 +873,7 @@ struct ChatView: View {
         .toolbar(.hidden,for:.navigationBar)
         .navigationBarBackButtonHidden(true)
         .foregroundStyle(.white)
-        .sheet(isPresented:$showProfile){ReferenceGroupProfile(chat:chat){dismiss()}}
+        .fullScreenCover(isPresented:$showProfile){ReferenceGroupProfile(chat:chat){dismiss()}}
         .sheet(isPresented:$showingCall){if let callURL {SafariCallView(url:callURL)}}
         .overlay { if showingVideoRecorder {
             VideoCircleRecorder(onVideo: { url in

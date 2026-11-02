@@ -1,75 +1,77 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
+title Nightwell Chat - Server
 chcp 65001 >nul
-cd /d "%~dp0"
+pushd "%~dp0" 2>nul
+if errorlevel 1 goto bad_path
 
-rem Only accept a Python interpreter that actually ran code and printed
-rem a known marker. Some Python Install Manager versions return success even
-rem when a requested runtime does not exist.
-set "PY="
+if not exist "server\windows_bootstrap.py" goto missing_files
+if not exist "server\app.py" goto missing_files
+
+set "NW_PYTHON="
 where py >nul 2>nul
 if not errorlevel 1 (
     for %%V in (3.12 3.13 3.11 3.10) do (
-        if not defined PY (
-            py -%%V -c "import sys; print('NIGHTWELL_PY_READY' if (3,10) <= sys.version_info[:2] <= (3,13) else 'UNSUPPORTED')" 2>nul | findstr /X /C:"NIGHTWELL_PY_READY" >nul
-            if not errorlevel 1 set "PY=py -%%V"
+        if not defined NW_PYTHON (
+            py -%%V -c "import sys; print('NIGHTWELL_PY_OK' if (3,10) <= sys.version_info[:2] <= (3,13) else 'BAD_VERSION')" 2>nul | findstr /X /C:"NIGHTWELL_PY_OK" >nul
+            if not errorlevel 1 set "NW_PYTHON=py -%%V"
         )
     )
 )
-if not defined PY (
+if not defined NW_PYTHON (
     where python >nul 2>nul
     if not errorlevel 1 (
-        python -c "import sys; print('NIGHTWELL_PY_READY' if (3,10) <= sys.version_info[:2] <= (3,13) else 'UNSUPPORTED')" 2>nul | findstr /X /C:"NIGHTWELL_PY_READY" >nul
-        if not errorlevel 1 set "PY=python"
+        python -c "import sys; print('NIGHTWELL_PY_OK' if (3,10) <= sys.version_info[:2] <= (3,13) else 'BAD_VERSION')" 2>nul | findstr /X /C:"NIGHTWELL_PY_OK" >nul
+        if not errorlevel 1 set "NW_PYTHON=python"
     )
 )
-if not defined PY goto :missing_python
+if not defined NW_PYTHON goto missing_python
 
-echo [Nightwell Chat] Python runtime found:
-%PY% --version
-
-rem Recreate only the local virtual environment if it uses an unsuitable
-rem Python version or its original Python installation is now missing.
-rem Keep .env, data, and database files untouched.
-if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" -c "import sys; print('NIGHTWELL_PY_READY' if (3,10) <= sys.version_info[:2] <= (3,13) else 'UNSUPPORTED')" 2>nul | findstr /X /C:"NIGHTWELL_PY_READY" >nul
-    if errorlevel 1 (
-        echo [Nightwell Chat] Repairing old .venv (chat data stays intact)...
-        rmdir /s /q ".venv"
-    )
+echo.
+echo ================================================
+echo           NIGHTWELL CHAT SERVER
+echo ================================================
+echo Running from: %CD%
+echo Using Python: %NW_PYTHON%
+echo.
+%NW_PYTHON% -u "server\windows_bootstrap.py"
+set "NW_EXIT=%ERRORLEVEL%"
+echo.
+if "%NW_EXIT%"=="0" (
+    echo [Nightwell] Server has stopped normally.
+) else (
+    echo [Nightwell] Startup failed. Error code: %NW_EXIT%
 )
-if not exist ".venv\Scripts\python.exe" (
-    echo [Nightwell Chat] Creating a local Python environment...
-    %PY% -m venv ".venv"
-    if errorlevel 1 goto :error
-)
-if not exist ".venv\Scripts\python.exe" goto :error
+echo [Nightwell] Log: "%CD%\logs\startup.log"
+echo Do not delete .env or the data folder when updating.
+echo.
+pause
+popd
+exit /b %NW_EXIT%
 
-".venv\Scripts\python.exe" -c "import sys; print('NIGHTWELL_PY_READY' if (3,10) <= sys.version_info[:2] <= (3,13) else 'UNSUPPORTED')" 2>nul | findstr /X /C:"NIGHTWELL_PY_READY" >nul
-if errorlevel 1 goto :error
-
-echo [Nightwell Chat] Installing dependencies...
-".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r "server\requirements.txt"
-if errorlevel 1 goto :error
-
-echo [Nightwell Chat] Starting on localhost:8009...
-".venv\Scripts\python.exe" "server\local_server.py"
-if errorlevel 1 goto :error
-exit /b 0
+:missing_files
+echo.
+echo [ERROR] Server files not found next to this BAT.
+echo Extract the ENTIRE ZIP archive before running the BAT.
+echo Required: server\app.py and server\windows_bootstrap.py
+echo Working directory: %CD%
+echo.
+pause
+popd
+exit /b 2
 
 :missing_python
 echo.
-echo [Nightwell Chat] Python 3.10 - 3.13 was not found.
-echo [Nightwell Chat] Python 3.15 cannot be used with this server setup.
-echo [Nightwell Chat] To install Python 3.12, open PowerShell and run:
-echo     py install 3.12
-echo [Nightwell Chat] If that is unavailable, run:
-echo     winget install -e --id Python.Python.3.12
-echo [Nightwell Chat] Then restart this BAT file. Existing chat data is safe.
+echo [ERROR] Compatible Python was not found.
+echo Install Python 3.12 and restart this BAT.
+echo PowerShell: winget install -e --id Python.Python.3.12
+echo Then close and reopen the launcher.
+echo.
 pause
-exit /b 1
+popd
+exit /b 3
 
-:error
-echo [Nightwell Chat] Failed to start. Read the error above.
+:bad_path
+echo [ERROR] Cannot access the server folder.
 pause
-exit /b 1
+exit /b 4

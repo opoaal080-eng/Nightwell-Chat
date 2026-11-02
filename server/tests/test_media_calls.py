@@ -52,16 +52,22 @@ def test_voice_call_accept_end_and_access():
         invited=c.post(f'/calls/direct/{bid}',headers=ah)
         assert invited.status_code == 201, invited.text
         call_id=invited.json()['id']
+        ticket=invited.json()['ticket']
+        scoped={'Authorization':'Call '+ticket}
+        assert c.get(f'/calls/{call_id}/status').status_code == 401
+        assert c.get(f'/calls/{call_id}/status',headers=scoped).json()['status']=='ringing'
         pending=c.get('/calls/pending',headers=bh)
         assert pending.status_code == 200 and pending.json()[0]['id']==call_id
         assert c.post(f'/calls/{call_id}/accept',headers=oh).status_code == 404
         accepted=c.post(f'/calls/{call_id}/accept',headers=bh)
         assert accepted.status_code == 200,accepted.text
         assert 'ticket' in accepted.json()
+        assert c.get(f'/calls/{call_id}/status',headers=scoped).json()['status']=='active'
         html=c.get(f'/calls/{call_id}/page')
         assert html.status_code == 200 and 'WebRTC' in html.text
         assert 'id="mute"' in html.text
         assert 'id="hang"' in html.text
-        ended=c.post(f'/calls/{call_id}/end',headers=ah)
+        ended=c.post(f'/calls/{call_id}/hangup',headers=scoped)
+        assert c.get(f'/calls/{call_id}/status',headers=scoped).json()['status']=='ended'
         assert ended.status_code == 200
         assert c.post(f'/calls/{call_id}/accept',headers=bh).status_code == 409

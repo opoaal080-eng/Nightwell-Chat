@@ -889,6 +889,36 @@ async def end_call(cid: str,user=Depends(current)):
         except Exception: pass
     return {"ok":True}
 
+def call_scope_user(cid: str, authorization: str) -> int:
+    """Authorize WebRTC page requests with the short-lived call ticket, not a session token."""
+    if not authorization.startswith("Call "):
+        raise HTTPException(401, "Call ticket required")
+    try:
+        claims = jwt.decode(authorization[5:], SECRET, algorithms=["HS256"])
+        if claims.get("scope") != "voice-call" or claims.get("cid") != cid:
+            raise ValueError("Wrong call scope")
+        return int(claims["sub"])
+    except (jwt.PyJWTError, KeyError, ValueError, TypeError):
+        raise HTTPException(401, "Invalid call ticket")
+
+@app.get("/calls/{cid}/status")
+def scoped_call_status(cid: str, authorization: str = Header(default="")):
+    uid = call_scope_user(cid, authorization)
+    now = int(time.time())
+    with db() as c:
+        row = c.execute("SELECT status,expires_at,caller_id,callee_id FROM calls WHERE id=?", (cid,)).fetchone()
+        if not row or uid not in (row["caller_id"], row["callee_id"]):
+            raise HTTPException(404, "Call not found")
+        if row["status"] in ("ringing", "active") and row["expires_at"] < now:
+            c.execute("UPDATE calls SET status='ended' WHERE id=?", (cid,))
+            return {"status": "ended"}
+        return {"status": row["status"]}
+
+@app.post("/calls/{cid}/hangup")
+async def scoped_call_hangup(cid: str, authorization: str = Header(default="")):
+    uid = call_scope_user(cid, authorization)
+    return await end_call(cid, user={"id": uid})
+
 @app.get("/calls/{cid}/page",response_class=HTMLResponse)
 def call_page(cid: str):
     if not re.fullmatch(r"[0-9a-f]{32}",cid): raise HTTPException(404,"Not found")

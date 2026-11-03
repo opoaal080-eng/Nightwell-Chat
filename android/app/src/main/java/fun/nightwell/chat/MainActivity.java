@@ -34,6 +34,58 @@ public final class MainActivity extends Activity {
     final ExecutorService network=Executors.newFixedThreadPool(3);
     final Handler handler=new Handler(Looper.getMainLooper());
     String token="", screen="", chatTitle="";
+    String nightwellState = "Проверка…";
+    TextView nightwellStateView;
+    private boolean hasNetwork() {
+        android.net.ConnectivityManager manager =
+            (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        if (manager == null) return false;
+        if (Build.VERSION.SDK_INT >= 23) return manager.getActiveNetwork() != null;
+        android.net.NetworkInfo info = manager.getActiveNetworkInfo();
+        return info != null && info.isConnected();
+    }
+    private void updateNightwellState(String state) {
+        nightwellState = state;
+        if (nightwellStateView != null) {
+            nightwellStateView.setText("● Nightwell · " + state);
+            nightwellStateView.setTextColor(state.equals("Онлайн") ? 0xff64d98b :
+                state.equals("Ограничен") ? 0xffffbd64 : MUTED);
+        }
+    }
+    private final Runnable nightwellPoll = new Runnable() {
+        @Override public void run() {
+            if (isDestroyed()) return;
+            network.execute(() -> {
+                String next;
+                if (!hasNetwork()) next = "Оффлайн";
+                else {
+                    HttpURLConnection connection = null;
+                    try {
+                        connection = (HttpURLConnection) new URL(HOST + "/health").openConnection();
+                        connection.setConnectTimeout(4000);
+                        connection.setReadTimeout(4000);
+                        connection.setRequestProperty("Accept", "application/json");
+                        connection.setUseCaches(false);
+                        int status = connection.getResponseCode();
+                        String contentType = connection.getContentType();
+                        boolean json = contentType != null && contentType.contains("json");
+                        boolean success = status == 200 && json &&
+                            new JSONObject(new String(read(connection.getInputStream(), 4096),
+                                StandardCharsets.UTF_8)).optBoolean("ok", false);
+                        next = success ? "Онлайн" : "Ограничен";
+                    } catch (Exception e) { next = hasNetwork() ? "Ограничен" : "Оффлайн"; }
+                    finally { if (connection != null) connection.disconnect(); }
+                }
+                final String result = next;
+                handler.post(() -> {
+                    if (isDestroyed() || isFinishing()) return;
+                    updateNightwellState(result);
+                    handler.removeCallbacks(nightwellPoll);
+                    handler.postDelayed(nightwellPoll, 12000);
+                });
+            });
+        }
+    };
     int chatId=-1, otherId=-1, meId=-1;
     JSONObject myself;
     LinearLayout page, messages;
@@ -76,7 +128,9 @@ public final class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);
         if(token.isEmpty())phoneLogin(false); else getMe(false);
     }
-    @Override protected void onDestroy(){stopVoicePlayback();cancelVoice();handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
+    @Override protected void onResume(){super.onResume();handler.removeCallbacks(nightwellPoll);handler.post(nightwellPoll);}
+    @Override protected void onPause(){handler.removeCallbacks(nightwellPoll);super.onPause();}
+    @Override protected void onDestroy(){stopVoicePlayback();cancelVoice();handler.removeCallbacks(nightwellPoll);handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
 
     int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
     GradientDrawable shape(int color){GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(dp(14));g.setStroke(dp(1),0xff333333);return g;}
@@ -87,6 +141,10 @@ public final class MainActivity extends Activity {
         screen=dest;handler.removeCallbacks(refresh);
         scroller=new ScrollView(this);scroller.setFillViewport(true);
         page=new LinearLayout(this);page.setOrientation(1);page.setPadding(dp(16),dp(24),dp(16),dp(22));page.setBackgroundColor(BG);
+        nightwellStateView = label("",11,MUTED);
+        nightwellStateView.setContentDescription("Состояние подключения Nightwell");
+        updateNightwellState(nightwellState);
+        page.addView(nightwellStateView);
         scroller.addView(page);setContentView(scroller);
     }
     void heading(String str){TextView title=label(str,26,FG);title.setTypeface(null,1);page.addView(title);}

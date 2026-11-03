@@ -1,4 +1,5 @@
 import SwiftUI
+import Network
 import PhotosUI
 import UniformTypeIdentifiers
 import QuickLook
@@ -30,6 +31,54 @@ struct GlassPanel: ViewModifier {
     }
 }
 extension View { func glass() -> some View { modifier(GlassPanel()) } }
+
+// This status monitors the Nightwell API, not merely Wi-Fi or cellular coverage.
+@MainActor final class ChatConnectionStatus: ObservableObject {
+    @Published private(set) var value = "Проверка…"
+    private let monitor = NWPathMonitor()
+    private var hasPath = true
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.hasPath = path.status == .satisfied
+                if !self.hasPath { self.value = "Оффлайн" }
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "fun.nightwell.chat.reachability"))
+    }
+    deinit { monitor.cancel() }
+
+    func watch(server: String) async {
+        while !Task.isCancelled {
+            await check(server: server)
+            do { try await Task.sleep(for: .seconds(10)) }
+            catch { break }
+        }
+    }
+    private func check(server: String) async {
+        guard hasPath else { value = "Оффлайн"; return }
+        guard let base = URL(string: server), base.scheme == "https",
+              let url = URL(string: "/health", relativeTo: base)?.absoluteURL else {
+            value = "Ограничен"
+            return
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard !Task.isCancelled else { return }
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let ok = (response as? HTTPURLResponse)?.statusCode == 200 &&
+                (json?["ok"] as? Bool) == true
+            value = !hasPath ? "Оффлайн" : ok ? "Онлайн" : "Ограничен"
+        } catch {
+            guard !Task.isCancelled else { return }
+            value = hasPath ? "Ограничен" : "Оффлайн"
+        }
+    }
+}
 
 struct RootView: View {
     @EnvironmentObject var store: ChatStore
@@ -177,6 +226,7 @@ struct LegacyLoginView: View {
 
 struct InboxView: View {
     @EnvironmentObject var store: ChatStore
+    @StateObject private var nightwellStatus = ChatConnectionStatus()
     @State private var findPeople = false
     @State private var group = false
     @State private var settings = false
@@ -234,6 +284,7 @@ struct InboxView: View {
             .sheet(isPresented:$calls) { IncomingCallsView() }
             .refreshable { await store.reloadChats() }
             .task { await store.reloadChats() }
+            .task(id: store.serverURL) { await nightwellStatus.watch(server: store.serverURL) }
             .onChange(of:store.eventVersion) { _,_ in Task { await store.reloadChats() } }
         }
     }
@@ -266,6 +317,17 @@ struct InboxView: View {
                     }.accessibilityLabel("Новый чат")
                 }
             }.padding(.bottom,1)
+            HStack(spacing:6) {
+                Circle()
+                    .fill(nightwellStatus.value == "Онлайн" ? Color.green :
+                          nightwellStatus.value == "Ограничен" ? Color.orange : Color.gray)
+                    .frame(width:6,height:6)
+                Text("Nightwell · \(nightwellStatus.value)")
+                    .font(.system(size:11,weight:.medium))
+                    .foregroundStyle(.white.opacity(0.65))
+                Spacer()
+            }
+            .accessibilityLabel("Подключение Nightwell: \(nightwellStatus.value)")
             HStack(spacing:0) {
                 filterButton("Все",index:0)
                 filterButton("Personal",index:1)

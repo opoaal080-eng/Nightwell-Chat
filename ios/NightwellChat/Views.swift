@@ -69,8 +69,9 @@ extension View { func glass() -> some View { modifier(GlassPanel()) } }
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard !Task.isCancelled else { return }
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let ok = (response as? HTTPURLResponse)?.statusCode == 200 &&
-                ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["ok"] as? Bool == true
+                (json?["ok"] as? Bool) == true
             value = !hasPath ? "Оффлайн" : ok ? "Онлайн" : "Ограничен"
         } catch {
             guard !Task.isCancelled else { return }

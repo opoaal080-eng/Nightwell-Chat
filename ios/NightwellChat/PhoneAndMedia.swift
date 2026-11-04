@@ -173,6 +173,11 @@ struct PhoneLinkView:View {
 struct CallPresentation: Identifiable {
     let id = UUID()
     let url: URL
+    var name = "Nightwell Chat"
+}
+
+extension Notification.Name {
+    static let nightwellCallKitMute = Notification.Name("NightwellCallKitMute")
 }
 
 
@@ -227,12 +232,13 @@ final class CallPageState: ObservableObject {
             }
         }
     }
-    func toggleMute() {
-        guard started, !ended else {return}
-        muted.toggle()
+    func setMuted(_ isMuted: Bool) {
+        guard started, !ended else { return }
+        muted = isMuted
         let flag = muted ? "true" : "false"
         webView?.evaluateJavaScript("window.setCallMuted && window.setCallMuted(\(flag));") { _,_ in }
     }
+    func toggleMute() { setMuted(!muted) }
     func end(_ completion:@escaping () -> Void) {
         guard !closing else { return }
         closing = true
@@ -251,6 +257,8 @@ final class CallPageState: ObservableObject {
 
 struct CallScreen: View {
     let url:URL
+    var displayName = "Nightwell Chat"
+    var isIncoming = false
     @EnvironmentObject private var store:ChatStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var page=CallPageState()
@@ -290,7 +298,7 @@ struct CallScreen: View {
                 Spacer()
                 HStack(spacing:50) {
                     Button {
-                        page.toggleMute()
+                        CallKitCoordinator.shared.requestMute(callID: callID, muted: !page.muted)
                     } label:{
                         VStack(spacing:10) {
                             Image(systemName:page.muted ? "mic.slash.fill" : "mic.fill")
@@ -299,7 +307,12 @@ struct CallScreen: View {
                             Text(page.muted ? "Включить" : "Микрофон").font(.caption)
                         }
                     }.disabled(!page.started || page.ended)
-                    Button {page.end {dismiss()}} label:{
+                    Button {
+                        page.end {
+                            CallKitCoordinator.shared.requestEnd(callID: callID)
+                            dismiss()
+                        }
+                    } label:{
                         VStack(spacing:10) {
                             Image(systemName:"phone.down.fill").font(.system(size:29))
                                 .frame(width:72,height:72).background(.red,in:Circle())
@@ -310,8 +323,31 @@ struct CallScreen: View {
             }.frame(maxWidth:.infinity,maxHeight:.infinity)
         }
         .interactiveDismissDisabled()
-        .onChange(of:page.ended) {_,value in if value {dismiss()}}
-        .onChange(of:store.endedCallID) {_,cid in if cid == callID {dismiss()}}
+        .onAppear {
+            if !isIncoming {
+                CallKitCoordinator.shared.reportOutgoing(callID: callID, displayName: displayName)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .nightwellCallKitMute)) { notice in
+            guard let cid = notice.userInfo?["callID"] as? String, cid == callID,
+                  let isMuted = notice.userInfo?["muted"] as? Bool else { return }
+            page.setMuted(isMuted)
+        }
+        .onChange(of:page.status) {_,value in
+            if value == "Разговор" { CallKitCoordinator.shared.reportConnected(callID: callID) }
+        }
+        .onChange(of:page.ended) {_,value in
+            if value {
+                CallKitCoordinator.shared.reportEnded(callID: callID)
+                dismiss()
+            }
+        }
+        .onChange(of:store.endedCallID) {_,cid in
+            if cid == callID {
+                CallKitCoordinator.shared.reportEnded(callID: callID)
+                dismiss()
+            }
+        }
         .task {
             let allowed = await withCheckedContinuation { continuation in
                 AVAudioApplication.requestRecordPermission { granted in continuation.resume(returning:granted) }
@@ -438,7 +474,7 @@ struct IncomingCallOverlay:View {
     var body:some View {
         Group {
             if let acceptedURL {
-                CallScreen(url:acceptedURL)
+                CallScreen(url:acceptedURL, isIncoming: true)
             } else {
                 ZStack {
                     Color.black.ignoresSafeArea()
@@ -454,18 +490,21 @@ struct IncomingCallOverlay:View {
                         Spacer()
                         HStack(spacing:55) {
                             Button {
-                                Task {await store.declineCall(id:call.id);store.incomingCall=nil}
+                                CallKitCoordinator.shared.requestEnd(callID: call.id)
                             } label:{
                                 Image(systemName:"phone.down.fill").font(.system(size:30))
                                     .frame(width:76,height:76).background(.red,in:Circle())
                             }
                             Button {
                                 answering=true
-                                Task {
-                                    if let answer=await store.acceptCall(id:call.id),
-                                       let url=store.voiceURL(answer) {acceptedURL=url}
-                                    else {store.incomingCall=nil}
-                                    answering=false
+                                if !CallKitCoordinator.shared.requestAnswer(callID: call.id) {
+                                    Task {
+                                        if let answer = await store.acceptCall(id: call.id),
+                                           let url = store.voiceURL(answer) {
+                                            acceptedURL = url
+                                        } else { store.incomingCall = nil }
+                                        answering = false
+                                    }
                                 }
                             } label:{
                                 Image(systemName:"phone.fill").font(.system(size:30))
@@ -477,10 +516,19 @@ struct IncomingCallOverlay:View {
             }
         }
         .onChange(of:store.endedCallID) {_,cid in if cid == call.id {store.incomingCall=nil}}
+        .onChange(of:store.systemAnsweredCall?.id) {_,answeredID in
+            guard answeredID == call.id, let answer=store.systemAnsweredCall else {return}
+            acceptedURL=store.voiceURL(answer)
+            answering=false
+        }
         .task {
+            if let answer=store.systemAnsweredCall,answer.id==call.id {
+                acceptedURL=store.voiceURL(answer)
+                answering=false
+            }
             while !Task.isCancelled && acceptedURL == nil {
                 try? await Task.sleep(for:.seconds(4))
-                if Task.isCancelled || acceptedURL != nil {break}
+                if Task.isCancelled || acceptedURL != nil || answering {continue}
                 let pending=await store.pendingCalls()
                 if !pending.contains(where:{$0.id==call.id}) {store.incomingCall=nil;break}
             }

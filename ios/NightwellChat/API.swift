@@ -112,11 +112,44 @@ enum NetworkError: LocalizedError {
     @Published var loading = false
     @Published var phoneStatus: PhoneStatus?
     @Published var incomingCall: VoiceCall?
+    @Published var systemAnsweredCall: VoiceCall?
     @Published var endedCallID: String?
     private var checkingIncoming = false
     @Published var serverURL = UserDefaults.standard.string(forKey: "nightwell.server") ?? "https://chat.nightwell.fun"
     private var socket: URLSessionWebSocketTask?
     private var socketJob: Task<Void, Never>?
+
+    init() {
+        let callKit = CallKitCoordinator.shared
+        callKit.onAnswer = { [weak self] callID in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let answer = await self.acceptCall(id: callID) {
+                    self.systemAnsweredCall = answer
+                } else {
+                    callKit.reportEnded(callID: callID, reason: .failed)
+                    self.incomingCall = nil
+                }
+            }
+        }
+        callKit.onEnd = { [weak self] callID in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.endedCallID = callID
+                if self.incomingCall?.id == callID { self.incomingCall = nil }
+                if self.systemAnsweredCall?.id == callID { self.systemAnsweredCall = nil }
+                do {
+                    let _: EmptyResult = try await self.request("/calls/\(callID)/end", method: "POST")
+                } catch {
+                    NSLog("Nightwell CallKit: server hangup failed: %@", error.localizedDescription)
+                }
+            }
+        }
+        callKit.onMute = { callID, isMuted in
+            NotificationCenter.default.post(name: .nightwellCallKitMute, object: nil,
+                userInfo: ["callID": callID, "muted": isMuted])
+        }
+    }
 
     private func url(_ path: String) throws -> URL {
         guard let host = URL(string: serverURL.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -283,7 +316,13 @@ enum NetworkError: LocalizedError {
         checkingIncoming = true
         defer { checkingIncoming = false }
         let pending = await pendingCalls()
-        if incomingCall == nil { incomingCall = pending.first }
+        if incomingCall == nil, let call = pending.first {
+            incomingCall = call
+            CallKitCoordinator.shared.reportIncoming(
+                callID: call.id,
+                callerName: call.caller_name ?? "Nightwell Chat"
+            )
+        }
     }
     func pendingCalls() async -> [VoiceCall] {
         do { return try await request("/calls/pending") }
@@ -297,8 +336,10 @@ enum NetworkError: LocalizedError {
         } catch { alertText=error.localizedDescription;return nil }
     }
     func declineCall(id:String) async {
-        do {let _:EmptyResult = try await request("/calls/\(id)/decline",method:"POST")}
-        catch {alertText=error.localizedDescription}
+        do {
+            let _: EmptyResult = try await request("/calls/\(id)/decline",method:"POST")
+            CallKitCoordinator.shared.reportEnded(callID: id, reason: .declinedElsewhere)
+        } catch {alertText=error.localizedDescription}
     }
     func voiceURL(_ call:VoiceCall) -> URL? {
         guard let ticket=call.ticket,let path=call.path else{return nil}
@@ -314,6 +355,7 @@ enum NetworkError: LocalizedError {
         SecureToken.save("")
         chats = []
         incomingCall = nil
+        systemAnsweredCall = nil
         endedCallID = nil
         me = nil
     }
@@ -399,7 +441,9 @@ enum NetworkError: LocalizedError {
                             if kind == "incoming_call" { await self.refreshIncomingCalls() }
                             if kind == "call_ended", let cid = event["call_id"] as? String {
                                 self.endedCallID = cid
+                                CallKitCoordinator.shared.reportEnded(callID: cid)
                                 if self.incomingCall?.id == cid { self.incomingCall = nil }
+                                if self.systemAnsweredCall?.id == cid { self.systemAnsweredCall = nil }
                             }
                             self.eventVersion += 1
                         }

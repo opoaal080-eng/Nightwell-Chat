@@ -180,7 +180,12 @@ public final class MainActivity extends Activity {
     }
     void btn(String str,Runnable r){Button b=new Button(this);b.setAllCaps(false);b.setText(str);b.setTextColor(FG);b.setBackground(shape(PANEL));
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(48));lp.setMargins(0,dp(5),0,dp(5));page.addView(b,lp);b.setOnClickListener(v->r.run());}
-    void note(String s){runOnUiThread(()->new AlertDialog.Builder(this).setTitle("Nightwell Chat").setMessage(s).setPositiveButton("ОК",null).show());}
+    void note(String s){
+        final String message=s!=null&&(s.contains("Unable to resolve host")||s.contains("No address associated with hostname"))
+            ?"DNS не может найти chat.nightwell.fun. Проверь настройки домена у DNS-провайдера, затем подключение Wi-Fi или мобильного интернета. Обновление приложения не исправит отсутствующую DNS-запись."
+            :s;
+        runOnUiThread(()->new AlertDialog.Builder(this).setTitle("Nightwell Chat").setMessage(message).setPositiveButton("ОК",null).show());
+    }
     void perform(Job j,Done done){network.execute(()->{try{byte[] b=j.call();runOnUiThread(()->{try{done.accept(b);}catch(Exception x){note(x.toString());}});}catch(Exception x){runOnUiThread(()->loading=false);note(x.getMessage()==null?x.toString():x.getMessage());}});}
     JSONObject payload(String... args)throws Exception{JSONObject o=new JSONObject();for(int i=0;i+1<args.length;i+=2)o.put(args[i],args[i+1]);return o;}
     byte[] read(InputStream stream,int max)throws Exception{

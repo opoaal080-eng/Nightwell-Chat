@@ -795,6 +795,7 @@ async def mark_read(chat_id:int,body:ReadUpdate,user=Depends(current)):
 # WebRTC offer/answer/ICE metadata. Audio itself travels peer-to-peer (or TURN).
 CALL_RING_SECONDS = 90
 CALL_MAX_SECONDS = 3600
+call_media_status: dict[str, dict[int, str]] = {}
 call_peers: dict[str, dict[int, WebSocket]] = {}
 
 def call_public(row):
@@ -891,6 +892,7 @@ async def end_call(cid: str,user=Depends(current)):
         if row["status"] not in ("ringing","active"): return {"ok":True}
         c.execute("UPDATE calls SET status='ended' WHERE id=?",(cid,))
         recipients=[row["caller_id"],row["callee_id"]]
+    call_media_status.pop(cid, None)
     await notify(recipients,{"type":"call_ended","call_id":cid})
     for peer in list(call_peers.get(cid,{}).values()):
         try: await peer.send_json({"type":"ended"})
@@ -1002,6 +1004,11 @@ async def call_signal(ws: WebSocket, cid: str, ticket: str = Query(default="")):
         await ws.send_json({"type":"connected","role":"caller" if uid==row["caller_id"] else "callee"})
         if len(room)==2 and row["status"]=="active":
             for other in list(room.values()): await other.send_json({"type":"peer_ready"})
+        # Tell a late-joining/reconnecting peer about the other phone's microphone failure.
+        other_id = row["callee_id"] if uid == row["caller_id"] else row["caller_id"]
+        other_error = call_media_status.get(cid, {}).get(other_id)
+        if other_error:
+            await ws.send_json({"type": "peer_media_error", "data": {"code": other_error}})
         while True:
             payload=await ws.receive_json()
             # Ignore frames from a socket superseded by a reconnect.
@@ -1011,11 +1018,12 @@ async def call_signal(ws: WebSocket, cid: str, ticket: str = Query(default="")):
             if kind=="hangup":
                 with db() as c:
                     c.execute("UPDATE calls SET status='ended' WHERE id=?",(cid,))
+                call_media_status.pop(cid, None)
                 for other in list(room.values()):
                     await other.send_json({"type":"ended"})
                 await notify([row["caller_id"],row["callee_id"]],{"type":"call_ended","call_id":cid})
                 break
-            if kind not in ("offer","answer","ice"): continue
+            if kind not in ("offer","answer","ice","media_error","media_ready"): continue
             # Keep message type and payload small, never relay untrusted commands.
             raw=payload.get("data")
             if len(str(raw))>12000: continue
@@ -1023,8 +1031,22 @@ async def call_signal(ws: WebSocket, cid: str, ticket: str = Query(default="")):
                 state=c.execute("SELECT status,expires_at FROM calls WHERE id=?",(cid,)).fetchone()
                 if not state or state["status"]!="active" or state["expires_at"]<int(time.time()): break
             target=room.get(row["callee_id"] if uid==row["caller_id"] else row["caller_id"])
+            if kind in ("media_error", "media_ready"):
+                if kind == "media_error":
+                    code = raw.get("code") if isinstance(raw, dict) else None
+                    if code not in ("NotAllowedError", "NotFoundError", "NotReadableError",
+                                    "AbortError", "TrackStartError", "SecurityError",
+                                    "OverconstrainedError", "UnknownError", "UnsupportedError"):
+                        code = "UnknownError"
+                    call_media_status.setdefault(cid, {})[uid] = code
+                    relay = {"type": "peer_media_error", "data": {"code": code}}
+                else:
+                    call_media_status.get(cid, {}).pop(uid, None)
+                    relay = {"type": "peer_media_ready"}
+            else:
+                relay = {"type": kind, "data": raw}
             if target:
-                try: await target.send_json({"type":kind,"data":raw})
+                try: await target.send_json(relay)
                 except Exception: pass
     except (WebSocketDisconnect,RuntimeError,ValueError):
         pass

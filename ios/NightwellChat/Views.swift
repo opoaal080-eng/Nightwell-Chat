@@ -1169,7 +1169,7 @@ struct ChatView: View {
                                 Task {
                                     if let call=await store.makeCall(to:person.id),
                                        let url=store.voiceURL(call) {
-                                        pendingProfileCall=CallPresentation(url:url)
+                                        pendingProfileCall=CallPresentation(url:url, name:person.display_name)
                                         showingContactProfile=false
                                     }
                                 }
@@ -1220,7 +1220,7 @@ struct ChatView: View {
                         Task {
                             if let call=await store.makeCall(to:person.id),
                                let url=store.voiceURL(call){
-                                activeCall=CallPresentation(url:url)
+                                activeCall=CallPresentation(url:url, name:person.display_name)
                             }
                         }
                     } label:{Image(systemName:"phone")}

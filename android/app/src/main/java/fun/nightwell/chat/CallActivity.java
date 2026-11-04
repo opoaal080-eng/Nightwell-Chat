@@ -38,7 +38,7 @@ public final class CallActivity extends Activity {
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;
     private Uri callUri;
-    private boolean networkLost=false, ending=false, muted=false, webReady=false, micAsked=false, startIssued=false, microphoneFailure=false;
+    private boolean networkLost=false, ending=false, muted=false, webReady=false, micAsked=false, startIssued=false, microphoneFailure=false, connectionFailure=false;
 
     private int dp(int value){return (int)(value*getResources().getDisplayMetrics().density);}
     private GradientDrawable circle(int color){
@@ -104,6 +104,7 @@ public final class CallActivity extends Activity {
         screen.addView(retry,sized(150,52));
         retry.setOnClickListener(v->{
             retry.setVisibility(View.GONE);
+            connectionFailure=false;
             status.setText("Проверяем микрофон…");
             if(microphoneFailure && webReady){
                 microphoneFailure=false;
@@ -188,7 +189,7 @@ public final class CallActivity extends Activity {
                     result->{
                         if("true".equals(result)){
                             retry.setVisibility(View.GONE);
-                            microphoneFailure=false;webReady=true;tryStartAudio();
+                            microphoneFailure=false;connectionFailure=false;webReady=true;tryStartAudio();
                         }else showError("Сервер вернул старую страницу звонка. Обнови сервер.");
                     }
                 );
@@ -286,8 +287,17 @@ public final class CallActivity extends Activity {
                         micButton.setEnabled(false);
                         showError(message);
                     }
+                    else if("call_error".equals(type)){
+                        connectionFailure=true;
+                        android.util.Log.w("NightwellCall","WebRTC ICE timeout: "+event.optString("code","unknown"));
+                        showError(message);
+                    }
                     else if("state".equals(type)){
-                        if(!microphoneFailure)status.setText(message);
+                        if("Разговор".equals(message)){
+                            connectionFailure=false;
+                            retry.setVisibility(View.GONE);
+                        }
+                        if(!microphoneFailure && !connectionFailure)status.setText(message);
                     }
                     else if("mute".equals(type)){
                         muted="on".equals(message);

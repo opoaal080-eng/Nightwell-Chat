@@ -388,7 +388,7 @@ struct SafariCallView:UIViewRepresentable {
             }
         }
         func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
-            webView.evaluateJavaScript("Boolean(document.getElementById('start') && document.getElementById('state'))") { [weak self] result,error in
+            webView.evaluateJavaScript("Boolean(document.getElementById('start') && document.getElementById('state') && window.NIGHTWELL_CALL_PAGE_VERSION === '0.11.11')") { [weak self] result,error in
                 guard let self else{return}
                 if result as? Bool == true {self.page.finishLoading()}
                 else {self.page.fail("Устаревшая страница звонка. Обнови сервер Nightwell Chat.")}

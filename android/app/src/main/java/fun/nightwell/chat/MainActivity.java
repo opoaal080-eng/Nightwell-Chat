@@ -19,6 +19,10 @@ import android.provider.MediaStore;
 import android.view.*;
 import android.widget.*;
 import androidx.core.content.FileProvider;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import org.json.*;
 import java.io.*;
 import java.net.*;
@@ -120,7 +124,11 @@ public final class MainActivity extends Activity {
     interface Done {void accept(byte[] data) throws Exception;}
 
     @Override public void onCreate(Bundle state){
-        super.onCreate(state);getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(BG);
+        super.onCreate(state);
+        // Android 15+ enforces edge-to-edge. The chat composer must respect IME insets.
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(BG);
         token=getPreferences(0).getString("accessToken","");
         ChatPushService.makeChannels(this);
         if(Build.VERSION.SDK_INT>=33 &&
@@ -145,7 +153,22 @@ public final class MainActivity extends Activity {
         nightwellStateView.setContentDescription("Состояние подключения Nightwell");
         updateNightwellState(nightwellState);
         page.addView(nightwellStateView);
+        applyWindowInsets(page, dp(24), dp(22));
         scroller.addView(page);setContentView(scroller);
+        ViewCompat.requestApplyInsets(page);
+    }
+    private void applyWindowInsets(LinearLayout content, int topPadding, int bottomPadding) {
+        // Insets keep the input visible above both the soft keyboard and gesture navigation.
+        // The base padding is reapplied each time; no cumulative growth on IME animations.
+        ViewCompat.setOnApplyWindowInsetsListener(content, (view, insets) -> {
+            Insets top = insets.getInsets(WindowInsetsCompat.Type.statusBars()
+                    | WindowInsetsCompat.Type.displayCutout());
+            Insets bottom = insets.getInsets(WindowInsetsCompat.Type.ime()
+                    | WindowInsetsCompat.Type.navigationBars());
+            view.setPadding(view.getPaddingLeft(), topPadding + top.top,
+                    view.getPaddingRight(), bottomPadding + bottom.bottom);
+            return insets;
+        });
     }
     void heading(String str){TextView title=label(str,26,FG);title.setTypeface(null,1);page.addView(title);}
     void hint(String str){page.addView(label(str,14,MUTED));}
@@ -414,7 +437,13 @@ public final class MainActivity extends Activity {
             mediaHeld=true;startVoice();return true;
         });
         voiceButton.setOnTouchListener((v,event)->{if(mediaHeld&&(event.getAction()==MotionEvent.ACTION_UP||event.getAction()==MotionEvent.ACTION_CANCEL)){mediaHeld=false;if(voiceRecorder!=null){if(event.getAction()==MotionEvent.ACTION_CANCEL)cancelVoice();else finishVoice();}return true;}return false;});
-        page.addView(compose);setContentView(page);loadMessages(true);checkIncoming();handler.postDelayed(refresh,6500);
+        page.addView(compose);
+        // This view becomes the window root rather than a ScrollView child.
+        // Give it its own IME-aware insets so the composer moves above the keyboard.
+        applyWindowInsets(page, dp(8), dp(8));
+        setContentView(page);
+        ViewCompat.requestApplyInsets(page);
+        loadMessages(true);checkIncoming();handler.postDelayed(refresh,6500);
     }
     void sendDraft(){
         String body=composer.getText().toString().trim();if(body.isEmpty())return;int cid=chatId,rid=replyId;

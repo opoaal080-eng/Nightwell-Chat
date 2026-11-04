@@ -796,6 +796,10 @@ public final class MainActivity extends Activity {
     void openCall(JSONObject call){
         String id=call.optString("id"), ticket=call.optString("ticket");
         if(id.isEmpty()||ticket.isEmpty()){note("Не удалось подключиться к звонку");return;}
+        // A MediaRecorder or MediaPlayer from the chat must not compete with WebRTC.
+        // Release them before opening the call activity for both outgoing and incoming calls.
+        stopVoicePlayback();
+        if(voiceRecorder!=null)cancelVoice();
         Intent intent=new Intent(this,CallActivity.class);
         intent.putExtra("url",HOST+"/calls/"+Uri.encode(id)+"/page#ticket="+Uri.encode(ticket));startActivity(intent);
     }

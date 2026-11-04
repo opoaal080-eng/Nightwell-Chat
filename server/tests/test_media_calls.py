@@ -56,6 +56,12 @@ def test_voice_call_accept_end_and_access():
         scoped={'Authorization':'Call '+ticket}
         assert c.get(f'/calls/{call_id}/status').status_code == 401
         assert c.get(f'/calls/{call_id}/status',headers=scoped).json()['status']=='ringing'
+        assert c.get(f'/calls/{call_id}/ice').status_code == 401
+        ice=c.get(f'/calls/{call_id}/ice',headers=scoped)
+        assert ice.status_code == 200
+        assert ice.headers['cache-control'] == 'no-store'
+        assert isinstance(ice.json()['iceServers'],list)
+        assert ice.json()['iceServers'][0]['urls'].startswith('stun:')
         pending=c.get('/calls/pending',headers=bh)
         assert pending.status_code == 200 and pending.json()[0]['id']==call_id
         assert c.post(f'/calls/{call_id}/accept',headers=oh).status_code == 404

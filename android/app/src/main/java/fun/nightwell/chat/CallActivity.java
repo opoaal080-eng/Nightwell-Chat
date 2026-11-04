@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.Uri;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -36,6 +37,9 @@ public final class CallActivity extends Activity {
     private Button micButton, endButton, retry;
     private PermissionRequest waiting;
     private ConnectivityManager connectivity;
+    private AudioManager audioManager;
+    private int previousAudioMode=AudioManager.MODE_NORMAL;
+    private boolean changedAudioMode=false;
     private ConnectivityManager.NetworkCallback networkCallback;
     private Uri callUri;
     private boolean networkLost=false, ending=false, muted=false, webReady=false, micAsked=false, startIssued=false, microphoneFailure=false, connectionFailure=false;
@@ -67,6 +71,19 @@ public final class CallActivity extends Activity {
         }
         getWindow().setStatusBarColor(Color.BLACK);
         getWindow().setNavigationBarColor(Color.BLACK);
+        // Configure the native audio route for WebRTC on physical Android phones.
+        audioManager=(AudioManager)getSystemService(Context.AUDIO_SERVICE);
+        if(audioManager!=null){
+            try{
+                previousAudioMode=audioManager.getMode();
+                if(previousAudioMode!=AudioManager.MODE_IN_COMMUNICATION){
+                    audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                    changedAudioMode=true;
+                }
+            }catch(SecurityException exception){
+                android.util.Log.w("NightwellCall","Cannot set voice communication mode",exception);
+            }
+        }
 
         FrameLayout root=new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -185,7 +202,7 @@ public final class CallActivity extends Activity {
         });
         web.setWebViewClient(new WebViewClient(){
             @Override public void onPageFinished(WebView view,String address){
-                if(!sameCallOrigin(Uri.parse(address))||ending)return;
+                if(!sameCallOrigin(Uri.parse(address))||ending||connectionFailure)return;
                 view.evaluateJavascript(
                     "Boolean(document.getElementById('start')&&window.startCallAudio&&window.NIGHTWELL_CALL_PAGE_VERSION)",
                     result->{
@@ -200,7 +217,11 @@ public final class CallActivity extends Activity {
                 if(request.isForMainFrame())showError("Сервер не открыл звонок: HTTP "+response.getStatusCode());
             }
             @Override public void onReceivedError(WebView view,WebResourceRequest request,android.webkit.WebResourceError error){
-                if(request.isForMainFrame()&&!ending)showError("Не удалось загрузить звонок. Проверь соединение.");
+                if(!request.isForMainFrame()||ending)return;
+                connectionFailure=true;
+                if(error.getErrorCode()==WebViewClient.ERROR_HOST_LOOKUP){
+                    showError("DNS не находит chat.nightwell.fun. Проверь DNS-запись домена, затем Wi-Fi или мобильный интернет.");
+                }else showError("Не удалось загрузить звонок. Проверь интернет и HTTPS сервера.");
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){
                 return !sameCallOrigin(request.getUrl());
@@ -330,6 +351,10 @@ public final class CallActivity extends Activity {
     }
     @Override public void onBackPressed(){endCall();}
     @Override protected void onDestroy(){
+        if(changedAudioMode&&audioManager!=null){
+            try{audioManager.setMode(previousAudioMode);}
+            catch(SecurityException exception){android.util.Log.w("NightwellCall","Audio mode restore failed",exception);}
+        }
         if(connectivity!=null&&networkCallback!=null)connectivity.unregisterNetworkCallback(networkCallback);
         if(waiting!=null)waiting.deny();
         if(web!=null){web.loadUrl("about:blank");web.removeJavascriptInterface("NightwellBridge");web.destroy();}

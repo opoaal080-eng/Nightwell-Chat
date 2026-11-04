@@ -91,6 +91,19 @@ final class CallKitCoordinator: NSObject, CXProviderDelegate {
         return true
     }
 
+    func requestMute(callID: String, muted: Bool) {
+        guard let uuid = uuidsByCallID[callID] else {
+            onMute?(callID, muted)
+            return
+        }
+        controller.request(CXTransaction(action: CXSetMutedCallAction(call: uuid, muted: muted))) { [weak self] error in
+            if let error {
+                NSLog("Nightwell CallKit: mute action failed: %@", error.localizedDescription)
+                DispatchQueue.main.async { self?.onMute?(callID, muted) }
+            }
+        }
+    }
+
     func requestEnd(callID: String) {
         guard let uuid = uuidsByCallID[callID] else {
             onEnd?(callID)

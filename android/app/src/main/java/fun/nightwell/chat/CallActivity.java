@@ -187,12 +187,12 @@ public final class CallActivity extends Activity {
             @Override public void onPageFinished(WebView view,String address){
                 if(!sameCallOrigin(Uri.parse(address))||ending)return;
                 view.evaluateJavascript(
-                    "Boolean(document.getElementById('start')&&window.startCallAudio)",
+                    "Boolean(document.getElementById('start')&&window.startCallAudio&&window.NIGHTWELL_CALL_PAGE_VERSION)",
                     result->{
                         if("true".equals(result)){
                             retry.setVisibility(View.GONE);
                             microphoneFailure=false;connectionFailure=false;webReady=true;tryStartAudio();
-                        }else showError("Сервер вернул старую страницу звонка. Обнови сервер.");
+                        }else showError("Устаревшая страница звонка на сервере. Обнови файлы server/app.py и server/call_page.html и перезапусти Nightwell Chat.");
                     }
                 );
             }
@@ -274,6 +274,16 @@ public final class CallActivity extends Activity {
                 JSONObject event=new JSONObject(json);
                 String type=event.optString("type","");
                 String message=event.optString("message","");
+                String code=event.optString("code","");
+                // Older servers described phone microphone failures as BlueStacks errors.
+                // Never display emulator instructions on a physical Android handset.
+                String visibleMessage=message;
+                if("microphone_error".equals(type) &&
+                   ("NotReadableError".equals(code)||"TrackStartError".equals(code)||
+                    "AbortError".equals(code)||message.contains("BlueStacks"))){
+                    visibleMessage="Android не смог открыть микрофон. Разреши доступ для Nightwell Chat, проверь системный переключатель микрофона и закрой другие звонки. После этого нажми «Повторить».";
+                }
+                final String shownMessage=visibleMessage;
                 runOnUiThread(()->{
                     if(ending)return;
                     if("ended".equals(type)){ending=true;finish();}
@@ -287,7 +297,7 @@ public final class CallActivity extends Activity {
                         startIssued=false;
                         microphoneFailure=true;
                         micButton.setEnabled(false);
-                        showError(message);
+                        showError(shownMessage);
                     }
                     else if("call_error".equals(type)){
                         connectionFailure=true;

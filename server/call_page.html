@@ -3,12 +3,13 @@
 .call-shell{width:min(94vw,460px);display:grid;gap:14px;padding:16px;box-sizing:border-box}.call-shell .panel{width:auto;margin:0;padding:24px;background:rgba(24,24,26,.97);border:1px solid #333;border-radius:28px}.call-status{min-height:330px;display:flex;flex-direction:column;justify-content:center;align-items:center}.brand{font-size:12px;font-weight:800;letter-spacing:.24em;color:#aaa}.orb{margin:34px auto 14px;width:118px;height:118px;border-radius:50%;background:radial-gradient(circle at 30% 22%,#666,#25252d 55%,#0e0e0f);box-shadow:0 0 0 12px #ffffff08,0 0 0 28px #ffffff06;animation:breathe 2.7s ease-in-out infinite}.call-status h1{font-size:27px;letter-spacing:0;margin:24px 0 0}.call-status #state{margin:10px 0;min-height:50px;font-size:15px}.controls{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap}.controls button{margin:0;flex:1 1 110px;min-width:0;min-height:58px;padding:11px 7px;font-size:14px;border-radius:19px;background:#353539;color:white}.controls button#hang{background:#e0444f;color:white}.controls button#mute{background:#343b46}.controls button#mute.muted{background:#435f86}.controls button#start{background:white;color:black}.controls button:disabled{opacity:.36}.call-shell small{text-align:center;font-size:12px}@keyframes breathe{50%{transform:scale(1.06);box-shadow:0 0 0 17px #ffffff0b,0 0 0 36px #ffffff05}}@media(prefers-reduced-motion:reduce){.orb{animation:none}}</style></head><body><div class="call-shell"><main class="panel call-status"><div class="brand">NIGHTWELL CHAT</div><div class="orb" aria-hidden="true"></div><h1>Голосовой звонок</h1><p id="state" role="status" aria-live="polite">Подготовка звонка</p></main><section class="panel controls" aria-label="Управление звонком"><button id="start">Включить микрофон</button><button id="mute" disabled>Выключить звук</button><button id="hang">Завершить</button></section><small>WebRTC · Разговор не записывается на сервере</small><audio id="remote" autoplay playsinline></audio></div>
 <script>
 'use strict';
-window.NIGHTWELL_CALL_PAGE_VERSION='0.11.10';
+window.NIGHTWELL_CALL_PAGE_VERSION='0.11.11';
 const cid='__CALL_ID__';const fragment=new URLSearchParams(location.hash.substring(1));const ticket=fragment.get('ticket')||'';
 const status=document.getElementById('state'),start=document.getElementById('start'),mute=document.getElementById('mute'),hang=document.getElementById('hang'),audio=document.getElementById('remote');
 let pendingOffer=null,pendingIce=[];
 let ws,peer,stream,role,ready=false,offered=false,finished=false,restarting=false,reconnectTimer=null,reconnectAttempts=0,muted=false,pollHandle=null,starting=false;
 let connectionWatchdog=null,iceRestartCount=0,connectionError=false;
+let signalingWatchdog=null,peerCreation=null,peerEpoch=0,localMicrophoneError=null,remoteMicrophoneError=false;
 let hasTurnRelay=false;
 function stopConnectionWatchdog(){if(connectionWatchdog){clearTimeout(connectionWatchdog);connectionWatchdog=null}}
 function connectionFailed(){
@@ -31,7 +32,7 @@ window.setCallMuted=setMuted;
 mute.onclick=()=>{if(setMuted(!muted))text(muted?'Микрофон выключен':'Микрофон включён')};
 function nativeEvent(type,message='',code=''){try{window.webkit?.messageHandlers?.nightwellCall?.postMessage({type,message,code});}catch(e){}try{window.NightwellBridge?.postMessage(JSON.stringify({type,message,code}));}catch(e){}}
 function text(msg){status.textContent=msg;nativeEvent('state',msg)}
-function resetPeer(){stopConnectionWatchdog();pendingOffer=null;pendingIce=[];if(peer){peer.onicecandidate=null;peer.ontrack=null;peer.onconnectionstatechange=null;peer.oniceconnectionstatechange=null;peer.close();peer=null}audio.srcObject=null;offered=false;restarting=false;iceRestartCount=0;connectionError=false}
+function resetPeer(){stopConnectionWatchdog();peerEpoch++;peerCreation=null;pendingOffer=null;pendingIce=[];if(peer){peer.onicecandidate=null;peer.ontrack=null;peer.onconnectionstatechange=null;peer.oniceconnectionstatechange=null;peer.close();peer=null}audio.srcObject=null;offered=false;restarting=false;iceRestartCount=0;connectionError=false}
 function send(kind,data){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:kind,data:data||null}))}
 function closeCall(remote=false){
  if(finished)return;finished=true;
@@ -89,25 +90,34 @@ async function connect(){
 async function flushIce(){const candidates=pendingIce;pendingIce=[];for(const candidate of candidates){try{await peer.addIceCandidate(candidate)}catch(err){console.warn('ICE not accepted')}}}
 async function answerOffer(offer){await ensurePeer();await peer.setRemoteDescription(offer);await flushIce();const answer=await peer.createAnswer();await peer.setLocalDescription(answer);send('answer',peer.localDescription);watchConnection()}
 async function ensurePeer(){
- if(peer)return;
- // Fetch TURN credentials only after validating the participant's short-lived ticket.
- const response=await fetch('/calls/'+cid+'/ice',{headers:{'Authorization':'Call '+ticket},cache:'no-store'});
- if(!response.ok)throw new Error('Не удалось получить настройки аудио, HTTP '+response.status);
- const cfg=await response.json();
- if(!Array.isArray(cfg.iceServers)||!cfg.iceServers.length)throw new Error('Нет настроек ICE на сервере');
- hasTurnRelay=cfg.iceServers.some(item=>[item.urls].flat().some(url=>String(url).startsWith('turn:')||String(url).startsWith('turns:')));
- peer=new RTCPeerConnection(cfg);
- peer.onicecandidate=e=>{if(e.candidate)send('ice',e.candidate.toJSON())};
- peer.ontrack=e=>{audio.srcObject=e.streams[0]||new MediaStream([e.track]);audio.play().catch(()=>text('Нажми экран, чтобы включить звук'))};
- peer.onconnectionstatechange=()=>{
-  if(peer.connectionState==='connected'){stopConnectionWatchdog();iceRestartCount=0;connectionError=false;text('Разговор')}
-  if(peer.connectionState==='disconnected'){text('Связь прервана, ждём восстановления…');watchConnection()}
-  if(peer.connectionState==='failed'){text('Пробуем восстановить звонок…');void restartIce()}
- };
- peer.oniceconnectionstatechange=()=>{
-  if(peer&&peer.iceConnectionState==='failed'&&!connectionError){void restartIce()}
- };
- if(stream)stream.getTracks().forEach(track=>peer.addTrack(track,stream));
+ if(peer)return peer;
+ if(peerCreation)return peerCreation;
+ const epoch=peerEpoch;
+ // Share one asynchronous creation among concurrent WebSocket messages.
+ const task=(async()=>{
+  const response=await fetch('/calls/'+cid+'/ice',{headers:{'Authorization':'Call '+ticket},cache:'no-store'});
+  if(!response.ok)throw new Error('Не удалось получить настройки аудио, HTTP '+response.status);
+  const cfg=await response.json();
+  if(epoch!==peerEpoch||finished)throw new Error('Соединение было сброшено');
+  if(!Array.isArray(cfg.iceServers)||!cfg.iceServers.length)throw new Error('Нет настроек ICE на сервере');
+  hasTurnRelay=cfg.iceServers.some(item=>[item.urls].flat().some(url=>String(url).startsWith('turn:')||String(url).startsWith('turns:')));
+  const pc=new RTCPeerConnection(cfg);peer=pc;
+  pc.onicecandidate=e=>{if(e.candidate)send('ice',e.candidate.toJSON())};
+  pc.ontrack=e=>{audio.srcObject=e.streams[0]||new MediaStream([e.track]);audio.play().catch(()=>text('Нажми экран, чтобы включить звук'))};
+  pc.onconnectionstatechange=()=>{
+   if(pc!==peer)return;
+   if(pc.connectionState==='connected'){stopConnectionWatchdog();stopSignalingWatchdog();iceRestartCount=0;connectionError=false;remoteMicrophoneError=false;text('Разговор')}
+   if(pc.connectionState==='disconnected'){text('Связь прервана, ждём восстановления…');watchConnection()}
+   if(pc.connectionState==='failed'){text('Пробуем восстановить звонок…');void restartIce()}
+  };
+  pc.oniceconnectionstatechange=()=>{
+   if(pc===peer&&pc.iceConnectionState==='failed'&&!connectionError){void restartIce()}
+  };
+  if(stream)stream.getTracks().forEach(track=>pc.addTrack(track,stream));
+  return pc;
+ })();
+ peerCreation=task;
+ try{return await task}finally{if(peerCreation===task)peerCreation=null}
 }
 async function negotiate(){
  if(finished||!stream||!ready)return;

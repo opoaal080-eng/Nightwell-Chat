@@ -175,6 +175,7 @@ async function startAudio(){
  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
   starting=false;
   const message='Этот WebView не поддерживает захват микрофона.';
+  localMicrophoneError='UnsupportedError';send('media_error',{code:localMicrophoneError});
   text(message);nativeEvent('microphone_error',message,'UnsupportedError');
   return false;
  }
@@ -194,10 +195,17 @@ async function startAudio(){
   if(finished){acquired.getTracks().forEach(t=>t.stop());return false}
   stream=acquired;
   mute.disabled=false;muted=false;renderMute();
+  localMicrophoneError=null;send('media_ready');
   nativeEvent('microphone_ready','Микрофон включён');
   text('Микрофон активен. Соединяем…');
-  if(pendingOffer){const offer=pendingOffer;pendingOffer=null;await answerOffer(offer)}
-  else await negotiate();
+  try {
+   if(pendingOffer){const offer=pendingOffer;pendingOffer=null;await answerOffer(offer)}
+   else await negotiate();
+  }catch(err){
+   // Report network/ICE failure as a network problem, not as a microphone problem.
+   const msg='Ошибка WebRTC: '+String(err&&err.message||'соединение недоступно');
+   text(msg);nativeEvent('call_error',msg,'WEBRTC_SETUP');
+  }
   return true;
  }catch(err){
   if(!finished){
@@ -205,8 +213,9 @@ async function startAudio(){
    resetPeer();
    start.disabled=false;mute.disabled=true;
    const message=microphoneErrorMessage(err);
+   localMicrophoneError=err&&err.name||'UnknownError';send('media_error',{code:localMicrophoneError});
    text(message);
-   nativeEvent('microphone_error',message,err&&err.name||'UnknownError');
+   nativeEvent('microphone_error',message,localMicrophoneError);
   }
   return false;
  }finally{starting=false}

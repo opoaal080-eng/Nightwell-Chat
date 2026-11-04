@@ -31,6 +31,7 @@ function connectionFailed(){
 }
 function watchConnection(){
  stopConnectionWatchdog();
+ if(finished||!peer||peer.connectionState==='connected')return;
  connectionWatchdog=setTimeout(()=>{
   if(finished||!peer||!ready||remoteMicrophoneError||peer.connectionState==='connected')return;
   if(role==='caller'&&iceRestartCount<1){void restartIce();return}
@@ -42,7 +43,17 @@ function setMuted(value){if(!stream||finished)return false;muted=!!value;stream.
 window.setCallMuted=setMuted;
 mute.onclick=()=>{if(setMuted(!muted))text(muted?'Микрофон выключен':'Микрофон включён')};
 function nativeEvent(type,message='',code=''){try{window.webkit?.messageHandlers?.nightwellCall?.postMessage({type,message,code});}catch(e){}try{window.NightwellBridge?.postMessage(JSON.stringify({type,message,code}));}catch(e){}}
-function text(msg){status.textContent=msg;nativeEvent('state',msg)}
+function text(msg){
+ // Signaling can send duplicate peer_ready/media_ready notifications after ICE is connected.
+ // Never overwrite a confirmed live call with a provisional setup label.
+ if(peer&&peer.connectionState==='connected'&&[
+  'Устанавливаем соединение…','Соединение…',
+  'Микрофон активен. Соединяем…','Микрофон собеседника включён. Соединяем…',
+  'Собеседник ответил. Ожидаем подключение его телефона…'
+ ].includes(msg))return;
+ if(status.textContent===msg)return;
+ status.textContent=msg;nativeEvent('state',msg);
+}
 function resetPeer(){stopConnectionWatchdog();peerEpoch++;peerCreation=null;pendingOffer=null;pendingIce=[];if(peer){peer.onicecandidate=null;peer.ontrack=null;peer.onconnectionstatechange=null;peer.oniceconnectionstatechange=null;peer.close();peer=null}audio.srcObject=null;offered=false;restarting=false;iceRestartCount=0;connectionError=false}
 function send(kind,data){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:kind,data:data||null}))}
 function closeCall(remote=false){
@@ -89,7 +100,7 @@ async function connect(){
   const msg=JSON.parse(e.data);
   try {
    if(msg.type==='connected'){role=msg.role;reconnectAttempts=0;text(role==='caller'?'Ожидание ответа…':'Соединение…');if(localMicrophoneError)send('media_error',{code:localMicrophoneError});return}
-   if(msg.type==='peer_ready'){ready=true;connectionError=false;stopSignalingWatchdog();await negotiate();return}
+   if(msg.type==='peer_ready'){ready=true;connectionError=false;stopSignalingWatchdog();if(!peer||peer.connectionState!=='connected')await negotiate();return}
    if(msg.type==='peer_left'){ready=false;stopSignalingWatchdog();resetPeer();text('Собеседник отключился. Ожидаем возвращения…');return}
    if(msg.type==='ended'){closeCall(true);return}
    if(msg.type==='peer_media_error'){
@@ -98,7 +109,7 @@ async function connect(){
    }
    if(msg.type==='peer_media_ready'){
     remoteMicrophoneError=false;connectionError=false;
-    text('Микрофон собеседника включён. Соединяем…');await negotiate();return
+    if(!peer||peer.connectionState!=='connected'){text('Микрофон собеседника включён. Соединяем…');await negotiate()}return
    }
    if(msg.type==='offer'){if(!stream){pendingOffer=msg.data;text('Готовим микрофон для ответа…');return}await answerOffer(msg.data);return}
    if(msg.type==='answer' && peer){await peer.setRemoteDescription(msg.data);await flushIce();return}
@@ -141,6 +152,8 @@ async function ensurePeer(){
 async function negotiate(){
  if(finished||!stream||!ready||remoteMicrophoneError)return;
  await ensurePeer();
+ // An existing connected RTCPeerConnection needs no additional setup UI or watchdog.
+ if(!peer||peer.connectionState==='connected')return;
  if(role==='caller'&&!offered){
   offered=true;
   try{
@@ -149,9 +162,9 @@ async function negotiate(){
    send('offer',peer.localDescription);
    watchConnection();
   }catch(err){offered=false;connectionFailed();console.warn('Offer failed',err)}
- }else{
+ }else if(peer.connectionState!=='connected'){
   if(!connectionError)text('Устанавливаем соединение…');
-  if(peer.connectionState!=='connected')watchConnection();
+  watchConnection();
  }
 }
 function microphoneErrorMessage(err){

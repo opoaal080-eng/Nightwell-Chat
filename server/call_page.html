@@ -7,17 +7,34 @@ const cid='__CALL_ID__';const fragment=new URLSearchParams(location.hash.substri
 const status=document.getElementById('state'),start=document.getElementById('start'),mute=document.getElementById('mute'),hang=document.getElementById('hang'),audio=document.getElementById('remote');
 let pendingOffer=null,pendingIce=[];
 let ws,peer,stream,role,ready=false,offered=false,finished=false,restarting=false,reconnectTimer=null,reconnectAttempts=0,muted=false,pollHandle=null,starting=false;
+let connectionWatchdog=null,iceRestartCount=0,connectionError=false;
+const hasTurnRelay=Array.isArray(window.NIGHTWELL_ICE_SERVERS)&&window.NIGHTWELL_ICE_SERVERS.some(server=>String(server.urls||'').includes('turn:')||String(server.urls||'').includes('turns:'));
+function stopConnectionWatchdog(){if(connectionWatchdog){clearTimeout(connectionWatchdog);connectionWatchdog=null}}
+function connectionFailed(){
+ if(finished||connectionError)return;
+ connectionError=true;stopConnectionWatchdog();
+ const message=hasTurnRelay?'Не удалось соединить устройства. Проверь мобильную сеть и доступность TURN-сервера.':'Не удалось соединить устройства. Для звонков через мобильную сеть настрой TURN-сервер Nightwell Chat.';
+ text(message);nativeEvent('call_error',message,'ICE_TIMEOUT');
+}
+function watchConnection(){
+ stopConnectionWatchdog();
+ connectionWatchdog=setTimeout(()=>{
+  if(finished||!peer||!ready||peer.connectionState==='connected')return;
+  if(role==='caller'&&iceRestartCount<1){void restartIce();return}
+  connectionFailed();
+ },18000);
+}
 function renderMute(){mute.textContent=muted?'Включить микрофон':'Выключить микрофон';mute.classList.toggle('muted',muted)}
 function setMuted(value){if(!stream||finished)return false;muted=!!value;stream.getAudioTracks().forEach(track=>{track.enabled=!muted});renderMute();nativeEvent('mute',muted?'on':'off');return true}
 window.setCallMuted=setMuted;
 mute.onclick=()=>{if(setMuted(!muted))text(muted?'Микрофон выключен':'Микрофон включён')};
 function nativeEvent(type,message='',code=''){try{window.webkit?.messageHandlers?.nightwellCall?.postMessage({type,message,code});}catch(e){}try{window.NightwellBridge?.postMessage(JSON.stringify({type,message,code}));}catch(e){}}
 function text(msg){status.textContent=msg;nativeEvent('state',msg)}
-function resetPeer(){pendingOffer=null;pendingIce=[];if(peer){peer.onicecandidate=null;peer.ontrack=null;peer.onconnectionstatechange=null;peer.close();peer=null}audio.srcObject=null;offered=false;restarting=false}
+function resetPeer(){stopConnectionWatchdog();pendingOffer=null;pendingIce=[];if(peer){peer.onicecandidate=null;peer.ontrack=null;peer.onconnectionstatechange=null;peer.oniceconnectionstatechange=null;peer.close();peer=null}audio.srcObject=null;offered=false;restarting=false;iceRestartCount=0;connectionError=false}
 function send(kind,data){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:kind,data:data||null}))}
 function closeCall(remote=false){
  if(finished)return;finished=true;
- if(reconnectTimer)clearTimeout(reconnectTimer);if(pollHandle)clearInterval(pollHandle);
+ if(reconnectTimer)clearTimeout(reconnectTimer);if(pollHandle)clearInterval(pollHandle);stopConnectionWatchdog();
  if(!remote){send('hangup');fetch('/calls/'+cid+'/hangup',{method:'POST',headers:{'Authorization':'Call '+ticket},keepalive:true}).catch(()=>{});}
  if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;resetPeer();if(ws)ws.close();
  start.disabled=true;mute.disabled=true;text('Звонок завершён');nativeEvent('ended',remote?'remote':'local');
@@ -25,16 +42,18 @@ function closeCall(remote=false){
 window.closeCall=closeCall;
 hang.onclick=()=>closeCall(false);
 async function restartIce(){
- if(finished||!peer||!ready||restarting)return;
+ if(finished||!peer||!ready||restarting||connectionError)return;
  if(peer.signalingState!=='stable')return;
  if(role!=='caller'){text('Ожидаем восстановления связи…');return}
- restarting=true;
+ if(iceRestartCount>=1){connectionFailed();return}
+ restarting=true;iceRestartCount++;
  try{
   text('Восстанавливаем соединение…');
   const offer=await peer.createOffer({iceRestart:true});
   await peer.setLocalDescription(offer);
   send('offer',peer.localDescription);
- }catch(err){text('Не удалось восстановить звонок: '+err.message)}
+  watchConnection();
+ }catch(err){connectionFailed();console.warn('ICE restart failed',err)}
  finally{restarting=false}
 }
 window.restartIce=restartIce;
@@ -45,6 +64,7 @@ async function connect(){
  ws.onclose=()=>{
   if(finished||ws!==socket)return;
   ready=false;
+  resetPeer(); // Force fresh offer/answer on reconnect.
   text('Сигнальное соединение потеряно. Переподключаемся…');
   if(reconnectAttempts>=6){text('Не удалось восстановить связь. Попробуй позвонить снова');return}
   const delay=Math.min(1000*Math.pow(2,reconnectAttempts++),10000);
@@ -56,7 +76,7 @@ async function connect(){
   const msg=JSON.parse(e.data);
   try {
    if(msg.type==='connected'){role=msg.role;reconnectAttempts=0;text(role==='caller'?'Ожидание ответа…':'Соединение…');return}
-   if(msg.type==='peer_ready'){ready=true;if(peer&&peer.connectionState==='failed')await restartIce();else await negotiate();return}
+   if(msg.type==='peer_ready'){ready=true;connectionError=false;await negotiate();return}
    if(msg.type==='peer_left'){ready=false;resetPeer();text('Собеседник отключился. Ожидаем возвращения…');return}
    if(msg.type==='ended'){closeCall(true);return}
    if(msg.type==='offer'){if(!stream){pendingOffer=msg.data;text('Нажми «Включить микрофон», чтобы ответить');return}await answerOffer(msg.data);return}
@@ -66,7 +86,7 @@ async function connect(){
  }
 }
 async function flushIce(){const candidates=pendingIce;pendingIce=[];for(const candidate of candidates){try{await peer.addIceCandidate(candidate)}catch(err){console.warn('ICE not accepted')}}}
-async function answerOffer(offer){await ensurePeer();await peer.setRemoteDescription(offer);await flushIce();const answer=await peer.createAnswer();await peer.setLocalDescription(answer);send('answer',peer.localDescription)}
+async function answerOffer(offer){await ensurePeer();await peer.setRemoteDescription(offer);await flushIce();const answer=await peer.createAnswer();await peer.setLocalDescription(answer);send('answer',peer.localDescription);watchConnection()}
 async function ensurePeer(){
  if(peer)return;
  const cfg={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
@@ -76,15 +96,33 @@ async function ensurePeer(){
  }
  peer=new RTCPeerConnection(cfg);
  peer.onicecandidate=e=>{if(e.candidate)send('ice',e.candidate.toJSON())};
- peer.ontrack=e=>{audio.srcObject=e.streams[0];audio.play().catch(()=>text('Нажми экран, чтобы включить звук'))};
+ peer.ontrack=e=>{audio.srcObject=e.streams[0]||new MediaStream([e.track]);audio.play().catch(()=>text('Нажми экран, чтобы включить звук'))};
  peer.onconnectionstatechange=()=>{
-  if(peer.connectionState==='connected')text('Разговор');
-  if(peer.connectionState==='disconnected')text('Связь прервана, ждём восстановления…');
-  if(peer.connectionState==='failed'){text('Пробуем восстановить звонок…');restartIce()}
-};
+  if(peer.connectionState==='connected'){stopConnectionWatchdog();iceRestartCount=0;connectionError=false;text('Разговор')}
+  if(peer.connectionState==='disconnected'){text('Связь прервана, ждём восстановления…');watchConnection()}
+  if(peer.connectionState==='failed'){text('Пробуем восстановить звонок…');void restartIce()}
+ };
+ peer.oniceconnectionstatechange=()=>{
+  if(peer&&peer.iceConnectionState==='failed'&&!connectionError){void restartIce()}
+ };
  if(stream)stream.getTracks().forEach(track=>peer.addTrack(track,stream));
 }
-async function negotiate(){if(finished||!stream||!ready)return;await ensurePeer();if(role==='caller'&&!offered){offered=true;const offer=await peer.createOffer();await peer.setLocalDescription(offer);send('offer',peer.localDescription)}else{text('Устанавливаем соединение…')}}
+async function negotiate(){
+ if(finished||!stream||!ready)return;
+ await ensurePeer();
+ if(role==='caller'&&!offered){
+  offered=true;
+  try{
+   const offer=await peer.createOffer();
+   await peer.setLocalDescription(offer);
+   send('offer',peer.localDescription);
+   watchConnection();
+  }catch(err){offered=false;connectionFailed();console.warn('Offer failed',err)}
+ }else{
+  if(!connectionError)text('Устанавливаем соединение…');
+  if(peer.connectionState!=='connected')watchConnection();
+ }
+}
 function microphoneErrorMessage(err){
  const name=err&&err.name||'UnknownError';
  if(name==='NotAllowedError'||name==='PermissionDeniedError'||name==='SecurityError')
@@ -140,7 +178,7 @@ async function pollCallStatus(){
  try{const response=await fetch('/calls/'+cid+'/status',{headers:{'Authorization':'Call '+ticket},cache:'no-store'});
  if(!response.ok){if(response.status===401||response.status===404||response.status===410)closeCall(true);return}
  const data=await response.json();if(data.status==='ended'||data.status==='declined')closeCall(true);
- else if(data.status==='active'&&role==='caller'&&!ready)text('Собеседник ответил. Соединяем…');
+ else if(data.status==='active'&&role==='caller'&&!ready&&!connectionError)text('Собеседник ответил. Соединяем…');
  }catch(err){}
 }
 connect();pollHandle=setInterval(pollCallStatus,3000);pollCallStatus();

@@ -282,11 +282,9 @@ struct CallScreen: View {
                 if page.failure != nil {
                     Button("Повторить") {
                         page.failure=nil
-                        if page.webReady {page.startAudioIfReady()}
-                        else {
-                            page.loading=true;page.webReady=false;page.started=false
-                            attempt += 1
-                        }
+                        // A timed-out ICE session requires a full page + peer reset.
+                        page.loading=true;page.webReady=false;page.started=false
+                        attempt += 1
                     }.buttonStyle(.borderedProminent)
                 }
                 Spacer()
@@ -372,7 +370,13 @@ struct SafariCallView:UIViewRepresentable {
                   let kind=data["type"] as? String else {return}
             switch kind {
             case "ended": page.ended=true
-            case "state": if let value=data["message"] as? String {page.status=value}
+            case "state":
+                if let value=data["message"] as? String {
+                    page.status=value
+                    if value=="Разговор" {page.failure=nil}
+                }
+            case "call_error":
+                page.fail((data["message"] as? String) ?? "Звонок не подключился. Попробуй ещё раз.")
             case "microphone_error":
                 page.started=false
                 page.fail((data["message"] as? String) ?? "Не удалось включить микрофон")

@@ -71,9 +71,9 @@ def test_voice_call_accept_end_and_access():
         assert c.get(f'/calls/{call_id}/status',headers=scoped).json()['status']=='active'
         html=c.get(f'/calls/{call_id}/page')
         assert html.status_code == 200 and 'WebRTC' in html.text
-        assert "NIGHTWELL_CALL_PAGE_VERSION='0.11.10'" in html.text
+        assert "NIGHTWELL_CALL_PAGE_VERSION='0.11.11'" in html.text
         assert 'BlueStacks' not in html.text
-        assert c.get('/health').json()['call_page_version'] == '0.11.10'
+        assert c.get('/health').json()['call_page_version'] == '0.11.11'
         assert 'id="mute"' in html.text
         assert 'id="hang"' in html.text
         ended=c.post(f'/calls/{call_id}/hangup',headers=scoped)

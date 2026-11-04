@@ -1,5 +1,6 @@
 """Nightwell Chat API, text-messaging MVP. All chat data stays on your server."""
 import asyncio
+import base64
 import hashlib
 import hmac
 import os
@@ -926,17 +927,27 @@ async def scoped_call_hangup(cid: str, authorization: str = Header(default="")):
     uid = call_scope_user(cid, authorization)
     return await end_call(cid, user={"id": uid})
 
-def call_ice_servers():
-    """Return public STUN and optional TURN only to an authorized call participant."""
+def call_ice_servers(user_id: int):
+    """Use time-limited coturn credentials if a shared secret is configured."""
     servers = [
         {"urls": "stun:stun.l.google.com:19302"},
         {"urls": "stun:stun.cloudflare.com:3478"},
     ]
-    url = os.getenv("NIGHTWELL_TURN_URL", "").strip()
-    username = os.getenv("NIGHTWELL_TURN_USERNAME", "").strip()
-    password = os.getenv("NIGHTWELL_TURN_PASSWORD", "").strip()
-    if url and username and password and url.startswith(("turn:", "turns:")):
-        servers.append({"urls": url, "username": username, "credential": password})
+    urls = [value.strip() for value in os.getenv("NIGHTWELL_TURN_URL", "").split(",")]
+    urls = [value for value in urls if value.startswith(("turn:", "turns:"))
+            and len(value) < 256 and not any(char.isspace() for char in value)][:4]
+    shared_secret = os.getenv("NIGHTWELL_TURN_SHARED_SECRET", "").strip()
+    if shared_secret:
+        # coturn use-auth-secret: <expiry unix timestamp>:<identity>, HMAC-SHA1/base64.
+        username = f"{int(time.time()) + 3600}:nw{user_id}"
+        password = base64.b64encode(hmac.new(shared_secret.encode(), username.encode(),
+                                             hashlib.sha1).digest()).decode("ascii")
+    else:
+        username = os.getenv("NIGHTWELL_TURN_USERNAME", "").strip()
+        password = os.getenv("NIGHTWELL_TURN_PASSWORD", "").strip()
+    if urls and username and password:
+        servers.append({"urls": urls if len(urls) > 1 else urls[0],
+                        "username": username, "credential": password})
     return servers
 
 
@@ -947,7 +958,7 @@ def scoped_call_ice(cid: str, authorization: str = Header(default="")):
         row = call_row(c, cid, uid)
         if row["status"] not in ("ringing", "active"):
             raise HTTPException(410, "Call ended")
-    return Response(content=json.dumps({"iceServers": call_ice_servers()}),
+    return Response(content=json.dumps({"iceServers": call_ice_servers(uid)}),
                     media_type="application/json", headers={"Cache-Control": "no-store"})
 
 

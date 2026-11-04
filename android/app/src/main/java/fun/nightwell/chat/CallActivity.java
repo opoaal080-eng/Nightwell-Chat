@@ -96,7 +96,9 @@ public final class CallActivity extends Activity {
         screen.addView(heading,headingParams);
         status=text("Подключаем…",16,0xffb8b8b8);
         status.setPadding(dp(16),dp(4),dp(16),dp(12));
-        screen.addView(status,sized(-1,84));
+        status.setMinHeight(dp(84));
+        status.setMaxLines(6);
+        screen.addView(status,sized(-1,-2));
         retry=new Button(this);
         retry.setText("Повторить");
         retry.setAllCaps(false);

@@ -12,6 +12,17 @@ let connectionWatchdog=null,iceRestartCount=0,connectionError=false;
 let signalingWatchdog=null,peerCreation=null,peerEpoch=0,localMicrophoneError=null,remoteMicrophoneError=false;
 let hasTurnRelay=false;
 function stopConnectionWatchdog(){if(connectionWatchdog){clearTimeout(connectionWatchdog);connectionWatchdog=null}}
+function stopSignalingWatchdog(){if(signalingWatchdog){clearTimeout(signalingWatchdog);signalingWatchdog=null}}
+function watchSignaling(){
+ if(finished||ready||connectionError||signalingWatchdog)return;
+ signalingWatchdog=setTimeout(()=>{
+  signalingWatchdog=null;
+  if(finished||ready||connectionError)return;
+  connectionError=true;
+  const msg='Собеседник не подключился к серверу звонков. Проверь интернет и DNS chat.nightwell.fun на другом телефоне.';
+  text(msg);nativeEvent('call_error',msg,'SIGNALING_TIMEOUT');
+ },20000);
+}
 function connectionFailed(){
  if(finished||connectionError)return;
  connectionError=true;stopConnectionWatchdog();
@@ -21,7 +32,7 @@ function connectionFailed(){
 function watchConnection(){
  stopConnectionWatchdog();
  connectionWatchdog=setTimeout(()=>{
-  if(finished||!peer||!ready||peer.connectionState==='connected')return;
+  if(finished||!peer||!ready||remoteMicrophoneError||peer.connectionState==='connected')return;
   if(role==='caller'&&iceRestartCount<1){void restartIce();return}
   connectionFailed();
  },role==='caller'?18000:35000);
@@ -36,7 +47,7 @@ function resetPeer(){stopConnectionWatchdog();peerEpoch++;peerCreation=null;pend
 function send(kind,data){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:kind,data:data||null}))}
 function closeCall(remote=false){
  if(finished)return;finished=true;
- if(reconnectTimer)clearTimeout(reconnectTimer);if(pollHandle)clearInterval(pollHandle);stopConnectionWatchdog();
+ if(reconnectTimer)clearTimeout(reconnectTimer);if(pollHandle)clearInterval(pollHandle);stopConnectionWatchdog();stopSignalingWatchdog();
  if(!remote){send('hangup');fetch('/calls/'+cid+'/hangup',{method:'POST',headers:{'Authorization':'Call '+ticket},keepalive:true}).catch(()=>{});}
  if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;resetPeer();if(ws)ws.close();
  start.disabled=true;mute.disabled=true;text('Звонок завершён');nativeEvent('ended',remote?'remote':'local');
@@ -65,10 +76,10 @@ async function connect(){
  ws=socket;
  ws.onclose=()=>{
   if(finished||ws!==socket)return;
-  ready=false;
+  ready=false;stopSignalingWatchdog();
   resetPeer(); // Force fresh offer/answer on reconnect.
   text('Сигнальное соединение потеряно. Переподключаемся…');
-  if(reconnectAttempts>=6){text('Не удалось восстановить связь. Попробуй позвонить снова');return}
+  if(reconnectAttempts>=6){const msg='Не удалось подключиться к серверу звонков. Проверь DNS и интернет.';text(msg);nativeEvent('call_error',msg,'SIGNALING_DISCONNECTED');return}
   const delay=Math.min(1000*Math.pow(2,reconnectAttempts++),10000);
   reconnectTimer=setTimeout(connect,delay);
  };
@@ -77,10 +88,18 @@ async function connect(){
   if(finished||ws!==socket)return;
   const msg=JSON.parse(e.data);
   try {
-   if(msg.type==='connected'){role=msg.role;reconnectAttempts=0;text(role==='caller'?'Ожидание ответа…':'Соединение…');return}
-   if(msg.type==='peer_ready'){ready=true;connectionError=false;await negotiate();return}
-   if(msg.type==='peer_left'){ready=false;resetPeer();text('Собеседник отключился. Ожидаем возвращения…');return}
+   if(msg.type==='connected'){role=msg.role;reconnectAttempts=0;text(role==='caller'?'Ожидание ответа…':'Соединение…');if(localMicrophoneError)send('media_error',{code:localMicrophoneError});return}
+   if(msg.type==='peer_ready'){ready=true;connectionError=false;stopSignalingWatchdog();await negotiate();return}
+   if(msg.type==='peer_left'){ready=false;stopSignalingWatchdog();resetPeer();text('Собеседник отключился. Ожидаем возвращения…');return}
    if(msg.type==='ended'){closeCall(true);return}
+   if(msg.type==='peer_media_error'){
+    remoteMicrophoneError=true;stopConnectionWatchdog();
+    text('У собеседника не запускается микрофон. Ожидаем, пока он исправит ошибку на телефоне.');return
+   }
+   if(msg.type==='peer_media_ready'){
+    remoteMicrophoneError=false;connectionError=false;
+    text('Микрофон собеседника включён. Соединяем…');await negotiate();return
+   }
    if(msg.type==='offer'){if(!stream){pendingOffer=msg.data;text('Готовим микрофон для ответа…');return}await answerOffer(msg.data);return}
    if(msg.type==='answer' && peer){await peer.setRemoteDescription(msg.data);await flushIce();return}
    if(msg.type==='ice' && msg.data){if(!peer||!peer.remoteDescription){if(pendingIce.length<256)pendingIce.push(msg.data)}else{await peer.addIceCandidate(msg.data)}}
@@ -120,7 +139,7 @@ async function ensurePeer(){
  try{return await task}finally{if(peerCreation===task)peerCreation=null}
 }
 async function negotiate(){
- if(finished||!stream||!ready)return;
+ if(finished||!stream||!ready||remoteMicrophoneError)return;
  await ensurePeer();
  if(role==='caller'&&!offered){
   offered=true;
@@ -200,7 +219,7 @@ async function pollCallStatus(){
  try{const response=await fetch('/calls/'+cid+'/status',{headers:{'Authorization':'Call '+ticket},cache:'no-store'});
  if(!response.ok){if(response.status===401||response.status===404||response.status===410)closeCall(true);return}
  const data=await response.json();if(data.status==='ended'||data.status==='declined')closeCall(true);
- else if(data.status==='active'&&role==='caller'&&!ready&&!connectionError)text('Собеседник ответил. Соединяем…');
+ else if(data.status==='active'&&!ready&&!connectionError){watchSignaling();if(role==='caller'&&!remoteMicrophoneError)text('Собеседник ответил. Ожидаем подключение его телефона…')}
  }catch(err){}
 }
 connect();pollHandle=setInterval(pollCallStatus,3000);pollCallStatus();

@@ -860,6 +860,13 @@ async def accept_call(cid: str, user=Depends(current)):
         c.execute("UPDATE calls SET status='active',expires_at=? WHERE id=?",(int(time.time())+CALL_MAX_SECONDS,cid))
         caller=row["caller_id"]
     await notify([caller],{"type":"call_accepted","call_id":cid})
+    # Both participants can have their signal sockets open while the call still rings.
+    # Do not wait for another websocket connection to start ICE negotiation.
+    room = call_peers.get(cid, {})
+    if len(room) == 2:
+        for peer in list(room.values()):
+            try: await peer.send_json({"type":"peer_ready"})
+            except (RuntimeError, WebSocketDisconnect): pass
     return {"ok":True,**call_target(cid,user["id"])}
 
 @app.post("/calls/{cid}/decline")
@@ -958,6 +965,11 @@ async def call_signal(ws: WebSocket, cid: str, ticket: str = Query(default="")):
     if previous is not None:
         try: await previous.close(code=1000)
         except (RuntimeError,WebSocketDisconnect): pass
+        # The surviving phone must discard its stale peer connection before re-offering.
+        for other_uid, other_ws in list(room.items()):
+            if other_uid != uid:
+                try: await other_ws.send_json({"type":"peer_left"})
+                except (RuntimeError, WebSocketDisconnect): pass
     try:
         await ws.send_json({"type":"connected","role":"caller" if uid==row["caller_id"] else "callee"})
         if len(room)==2 and row["status"]=="active":

@@ -211,7 +211,7 @@ def members(c, chat_id):
     return [r[0] for r in c.execute("SELECT user_id FROM members WHERE chat_id=?",(chat_id,)).fetchall()]
 
 @app.get("/health")
-def health(): return {"ok":True,"service":"nightwell-chat","attachments":{"max_bytes":MAX_FILE_SIZE,"supported_extensions":sorted(ALLOWED_SUFFIXES),"endpoint":"/chats/{chat_id}/attachments"}}
+def health(): return {"ok":True,"service":"nightwell-chat","call_page_version":"0.11.10","attachments":{"max_bytes":MAX_FILE_SIZE,"supported_extensions":sorted(ALLOWED_SUFFIXES),"endpoint":"/chats/{chat_id}/attachments"}}
 
 # Device registrations belong to the authenticated user; no push credentials
 # are ever accepted from anonymous callers. Old accounts/DB rows are kept.

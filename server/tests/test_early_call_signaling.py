@@ -37,3 +37,12 @@ def test_accept_notifies_two_existing_websocket_peers():
                 assert callee.receive_json()["type"] == "offer"
                 callee.send_json({"type": "answer", "data": {"type": "answer", "sdp": "v=0\\r\\n"}})
                 assert caller.receive_json()["type"] == "answer"
+                # A microphone failure on Android is relayed immediately to iPhone.
+                callee.send_json({"type": "media_error", "data": {"code": "NotReadableError"}})
+                problem = caller.receive_json()
+                assert problem == {"type": "peer_media_error", "data": {"code": "NotReadableError"}}
+
+                # The other phone must be told if the microphone becomes available.
+                callee.send_json({"type": "media_ready"})
+                assert caller.receive_json()["type"] == "peer_media_ready"
+

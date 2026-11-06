@@ -49,7 +49,7 @@ public final class CallForegroundService extends Service {
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         Intent open = new Intent(this, CallActivity.class)
-            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
         PendingIntent pending = PendingIntent.getActivity(this, 8021, open,
             PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification notification = new Notification.Builder(this, CHANNEL)

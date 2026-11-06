@@ -136,7 +136,28 @@ public final class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);
         if(token.isEmpty())phoneLogin(false); else getMe(false);
     }
-    @Override protected void onResume(){super.onResume();handler.removeCallbacks(nightwellPoll);handler.post(nightwellPoll);}
+    @Override protected void onResume(){
+        super.onResume();
+        handler.removeCallbacks(nightwellPoll);
+        handler.post(nightwellPoll);
+        showCallBanner();
+    }
+    private void showCallBanner() {
+        if(page==null)return;
+        View old=page.findViewWithTag("active_call_banner");
+        if(!CallActivity.isRunning()) {
+            if(old!=null)page.removeView(old);
+            return;
+        }
+        if(old!=null)return;
+        Button banner=compact("☎ Продолжается звонок · вернуться",()->{
+            Intent open=new Intent(this,CallActivity.class);
+            open.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(open);
+        });
+        banner.setTag("active_call_banner");
+        page.addView(banner,0,new LinearLayout.LayoutParams(-1,dp(48)));
+    }
     @Override protected void onPause(){handler.removeCallbacks(nightwellPoll);super.onPause();}
     @Override protected void onDestroy(){stopVoicePlayback();cancelVoice();handler.removeCallbacks(nightwellPoll);handler.removeCallbacks(refresh);network.shutdownNow();super.onDestroy();}
 
@@ -153,6 +174,7 @@ public final class MainActivity extends Activity {
         nightwellStateView.setContentDescription("Состояние подключения Nightwell");
         updateNightwellState(nightwellState);
         page.addView(nightwellStateView);
+        showCallBanner();
         applyWindowInsets(page, dp(24), dp(22));
         scroller.addView(page);setContentView(scroller);
         ViewCompat.requestApplyInsets(page);

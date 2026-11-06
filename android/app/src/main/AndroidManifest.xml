@@ -20,7 +20,7 @@
         </service>
         <activity android:name=".VideoCircleActivity" android:exported="false" android:screenOrientation="portrait" />
         <service android:name=".CallForegroundService" android:exported="false" android:foregroundServiceType="microphone" />
-        <activity android:name=".CallActivity" android:exported="false" android:launchMode="singleTop"
+        <activity android:name=".CallActivity" android:exported="false" android:launchMode="singleTask"
             android:supportsPictureInPicture="true" android:resizeableActivity="true"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden" />
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">

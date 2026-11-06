@@ -174,6 +174,7 @@ struct CallPresentation: Identifiable {
     let id = UUID()
     let url: URL
     var name = "Nightwell Chat"
+    var isIncoming = false
 }
 
 extension Notification.Name {
@@ -189,6 +190,7 @@ final class CallPageState: ObservableObject {
     @Published var ended = false
     @Published var status = "Подключаем…"
     @Published var muted = false
+    @Published var minimized = false
     var microphoneAllowed = false
     var webReady = false
     var started = false
@@ -260,8 +262,9 @@ struct CallScreen: View {
     var displayName = "Nightwell Chat"
     var isIncoming = false
     @EnvironmentObject private var store:ChatStore
-    @Environment(\.dismiss) private var dismiss
     @StateObject private var page=CallPageState()
+    @StateObject private var audioRoute=CallAudioRouter()
+    @State private var routePicker=false
     @State private var attempt=0
 
     private var callID:String {
@@ -271,12 +274,35 @@ struct CallScreen: View {
 
     var body:some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-            // WebKit handles WebRTC audio; all visible controls are native SwiftUI.
+            // Keep WebKit mounted while the native call screen is minimized.
             SafariCallView(url:url,page:page).id(attempt)
                 .frame(width:250,height:200).opacity(0.015)
                 .allowsHitTesting(false).accessibilityHidden(true)
+            if page.minimized {
+                Button { page.minimized = false } label: {
+                    HStack(spacing:10) {
+                        Image(systemName:"phone.fill").foregroundStyle(.green)
+                        Text("Звонок · " + displayName).lineLimit(1)
+                        Spacer(minLength:8)
+                        Image(systemName:"arrow.up.left.and.arrow.down.right")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white).padding(15)
+                    .background(Color(white:0.17),in:RoundedRectangle(cornerRadius:18))
+                    .shadow(color:.black.opacity(0.45),radius:10)
+                }
+                .buttonStyle(.plain).padding(.horizontal,12).padding(.top,8)
+                .frame(maxWidth:.infinity,alignment:.top)
+            } else {
+            Color.black.ignoresSafeArea()
             VStack(spacing:22) {
+                HStack {
+                    Button { page.minimized = true } label: {
+                        Label("Скрыть",systemImage:"chevron.down")
+                    }
+                    .font(.subheadline).foregroundStyle(.white)
+                    Spacer()
+                }.padding(.horizontal,24).padding(.top,12)
                 Text("NIGHTWELL CHAT").tracking(4).font(.system(size:13,weight:.semibold))
                     .foregroundStyle(.gray).padding(.top,45)
                 Spacer()
@@ -296,7 +322,7 @@ struct CallScreen: View {
                     }.buttonStyle(.borderedProminent)
                 }
                 Spacer()
-                HStack(spacing:50) {
+                HStack(spacing:24) {
                     Button {
                         CallKitCoordinator.shared.requestMute(callID: callID, muted: !page.muted)
                     } label:{
@@ -307,10 +333,17 @@ struct CallScreen: View {
                             Text(page.muted ? "Включить" : "Микрофон").font(.caption)
                         }
                     }.disabled(!page.started || page.ended)
+                    Button { audioRoute.reload(); routePicker = true } label: {
+                        VStack(spacing:10) {
+                            Image(systemName:"speaker.wave.2.fill").font(.system(size:27))
+                                .frame(width:72,height:72).background(Color(white:0.22),in:Circle())
+                            Text("Вывод").font(.caption)
+                        }
+                    }
                     Button {
                         page.end {
                             CallKitCoordinator.shared.requestEnd(callID: callID)
-                            dismiss()
+                            store.activeCall = nil
                         }
                     } label:{
                         VStack(spacing:10) {
@@ -321,9 +354,18 @@ struct CallScreen: View {
                     }.disabled(page.closing)
                 }.buttonStyle(.plain).foregroundStyle(.white).padding(.bottom,62)
             }.frame(maxWidth:.infinity,maxHeight:.infinity)
+            }
+        }
+        .confirmationDialog("Устройство вывода",isPresented:$routePicker) {
+            ForEach(audioRoute.devices) { device in
+                Button((audioRoute.selected == device.id ? "✓ " : "") + device.name) {
+                    audioRoute.select(device.id)
+                }
+            }
         }
         .interactiveDismissDisabled()
         .onAppear {
+            audioRoute.reload()
             if !isIncoming {
                 CallKitCoordinator.shared.reportOutgoing(callID: callID, displayName: displayName)
             }
@@ -339,13 +381,13 @@ struct CallScreen: View {
         .onChange(of:page.ended) {_,value in
             if value {
                 CallKitCoordinator.shared.reportEnded(callID: callID)
-                dismiss()
+                store.activeCall = nil
             }
         }
         .onChange(of:store.endedCallID) {_,cid in
             if cid == callID {
                 CallKitCoordinator.shared.reportEnded(callID: callID)
-                dismiss()
+                store.activeCall = nil
             }
         }
         .task {
@@ -469,13 +511,9 @@ struct SafariCallView:UIViewRepresentable {
 struct IncomingCallOverlay:View {
     let call:VoiceCall
     @EnvironmentObject private var store:ChatStore
-    @State private var acceptedURL:URL?
     @State private var answering=false
     var body:some View {
         Group {
-            if let acceptedURL {
-                CallScreen(url:acceptedURL, isIncoming: true)
-            } else {
                 ZStack {
                     Color.black.ignoresSafeArea()
                     VStack(spacing:24) {
@@ -501,7 +539,8 @@ struct IncomingCallOverlay:View {
                                     Task {
                                         if let answer = await store.acceptCall(id: call.id),
                                            let url = store.voiceURL(answer) {
-                                            acceptedURL = url
+                                            store.activeCall = CallPresentation(url:url, name:call.caller_name ?? "Nightwell Chat", isIncoming:true)
+                                            store.incomingCall = nil
                                         } else { store.incomingCall = nil }
                                         answering = false
                                     }
@@ -513,22 +552,21 @@ struct IncomingCallOverlay:View {
                         }.buttonStyle(.plain).foregroundStyle(.white).padding(.bottom,65)
                     }.padding(24)
                 }
-            }
         }
         .onChange(of:store.endedCallID) {_,cid in if cid == call.id {store.incomingCall=nil}}
         .onChange(of:store.systemAnsweredCall?.id) {_,answeredID in
             guard answeredID == call.id, let answer=store.systemAnsweredCall else {return}
-            acceptedURL=store.voiceURL(answer)
+            if let url=store.voiceURL(answer) { store.activeCall=CallPresentation(url:url,name:call.caller_name ?? "Nightwell Chat",isIncoming:true); store.incomingCall=nil }
             answering=false
         }
         .task {
             if let answer=store.systemAnsweredCall,answer.id==call.id {
-                acceptedURL=store.voiceURL(answer)
+                if let url=store.voiceURL(answer) { store.activeCall=CallPresentation(url:url,name:call.caller_name ?? "Nightwell Chat",isIncoming:true); store.incomingCall=nil }
                 answering=false
             }
-            while !Task.isCancelled && acceptedURL == nil {
+            while !Task.isCancelled && store.activeCall == nil && store.incomingCall?.id == call.id {
                 try? await Task.sleep(for:.seconds(4))
-                if Task.isCancelled || acceptedURL != nil || answering {continue}
+                if Task.isCancelled || store.activeCall != nil || answering {continue}
                 let pending=await store.pendingCalls()
                 if !pending.contains(where:{$0.id==call.id}) {store.incomingCall=nil;break}
             }

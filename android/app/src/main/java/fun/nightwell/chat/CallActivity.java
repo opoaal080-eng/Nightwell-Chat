@@ -202,9 +202,6 @@ public final class CallActivity extends Activity {
         controls.addView(endButton,endParams);
         endButton.setOnClickListener(v->endCall());
         setContentView(root);
-        if(Build.VERSION.SDK_INT >= 31)
-            setPictureInPictureParams(new PictureInPictureParams.Builder()
-                .setAspectRatio(new Rational(1,1)).setAutoEnterEnabled(true).build());
 
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
@@ -292,6 +289,9 @@ public final class CallActivity extends Activity {
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)return;
         startIssued=true;
         CallForegroundService.begin(this);
+        if(Build.VERSION.SDK_INT>=31)
+            setPictureInPictureParams(new PictureInPictureParams.Builder()
+                .setAspectRatio(new Rational(1,1)).setAutoEnterEnabled(true).build());
         // Do not enable mute until WebRTC confirms that the input source has started.
         micButton.setEnabled(false);
         web.evaluateJavascript("if(window.startCallAudio){void window.startCallAudio();true}else false",null);

@@ -91,6 +91,11 @@ struct RootView: View {
         .tint(.white)
         .background(NightwellBackground())
         .fullScreenCover(item:$store.incomingCall) { call in IncomingCallOverlay(call:call) }
+        .overlay(alignment:.top) {
+            if let call=store.activeCall {
+                CallScreen(url:call.url, displayName:call.name, isIncoming:call.isIncoming)
+            }
+        }
         .task(id:scenePhase == .active && !store.token.isEmpty) {
             guard scenePhase == .active && !store.token.isEmpty else { return }
             while !Task.isCancelled {
@@ -952,7 +957,6 @@ struct ChatView: View {
     @State private var audioPlayer: AVPlayer?
     @State private var playingAudioID: Int?
     @State private var audioEndObserver:NSObjectProtocol?
-    @State private var activeCall: CallPresentation?
     @State private var pendingProfileCall: CallPresentation?
     @State private var showingContactProfile=false
     @ViewBuilder
@@ -1155,7 +1159,7 @@ struct ChatView: View {
         .navigationTitle(chat.title)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented:$showingContactProfile,onDismiss: {
-            if let pendingProfileCall { activeCall=pendingProfileCall; self.pendingProfileCall=nil }
+            if let pendingProfileCall { store.activeCall=pendingProfileCall; self.pendingProfileCall=nil }
         }) {
             NavigationStack {
                 ScrollView {
@@ -1220,14 +1224,13 @@ struct ChatView: View {
                         Task {
                             if let call=await store.makeCall(to:person.id),
                                let url=store.voiceURL(call){
-                                activeCall=CallPresentation(url:url, name:person.display_name)
+                                store.activeCall=CallPresentation(url:url, name:person.display_name)
                             }
                         }
                     } label:{Image(systemName:"phone")}
                 }
             }
         }
-        .fullScreenCover(item:$activeCall) { call in CallScreen(url:call.url) }
         .fullScreenCover(isPresented:$showingVideoRecorder){
             VideoCircleRecorder(onVideo: { url in
                 Task {

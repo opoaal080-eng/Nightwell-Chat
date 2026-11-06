@@ -63,7 +63,7 @@ public final class CallForegroundService extends Service {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .build();
         try {
-            if (Build.VERSION.SDK_INT >= 29)
+            if (Build.VERSION.SDK_INT >= 34)
                 startForeground(8021, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             else startForeground(8021, notification);
             PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);

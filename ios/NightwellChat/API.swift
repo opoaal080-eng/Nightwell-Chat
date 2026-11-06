@@ -112,6 +112,7 @@ enum NetworkError: LocalizedError {
     @Published var loading = false
     @Published var phoneStatus: PhoneStatus?
     @Published var incomingCall: VoiceCall?
+    @Published var activeCall: CallPresentation?
     @Published var systemAnsweredCall: VoiceCall?
     @Published var endedCallID: String?
     private var checkingIncoming = false
@@ -355,6 +356,7 @@ enum NetworkError: LocalizedError {
         SecureToken.save("")
         chats = []
         incomingCall = nil
+        activeCall = nil
         systemAnsweredCall = nil
         endedCallID = nil
         me = nil

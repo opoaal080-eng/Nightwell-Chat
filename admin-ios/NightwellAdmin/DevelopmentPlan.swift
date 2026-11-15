@@ -44,6 +44,10 @@ struct DevelopmentPlan: Decodable, Identifiable {
               !sections.isEmpty, Set(identifiers).count == identifiers.count else {
             throw DevelopmentContentError.invalid("Проверьте название и разделы материала.")
         }
+        guard (1..<Int.max).contains(metadata.horizons.developmentWeeks),
+              (1..<Int.max).contains(metadata.horizons.marketingDays) else {
+            throw DevelopmentContentError.invalid("Горизонт плана должен быть положительным.")
+        }
         guard Set(features.map(\.id)).count == features.count,
               Set(roadmap.map(\.id)).count == roadmap.count,
               Set(marketing90days.map(\.id)).count == marketing90days.count,

@@ -51,6 +51,15 @@ struct DevelopmentDataTests {
         if let documents = object["documents"] as? [[String: Any]], let first = documents.first {
             object["documents"] = [first, first]
             try expectInvalid(object)
+            var invalidDocument = first
+            var metadata = invalidDocument["metadata"] as! [String: Any]
+            var horizons = metadata["horizons"] as! [String: Any]
+            horizons["developmentWeeks"] = -1
+            metadata["horizons"] = horizons
+            invalidDocument["metadata"] = metadata
+            invalidDocument["roadmap"] = []
+            object["documents"] = [invalidDocument]
+            try expectInvalid(object)
         }
         print("Development content OK: \(plan.sections.count) sections, \(plan.features.count) features; scenario calculations and validation passed.")
     }

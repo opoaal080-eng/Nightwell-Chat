@@ -5,6 +5,10 @@ on:
     paths:
       - 'admin-ios/**'
       - '.github/workflows/nightwell-admin-ipa.yml'
+  pull_request:
+    paths:
+      - 'admin-ios/**'
+      - '.github/workflows/nightwell-admin-ipa.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -14,6 +18,10 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Validate development content and calculations
+        run: |
+          swiftc -parse-as-library admin-ios/NightwellAdmin/DevelopmentPlan.swift admin-ios/Tests/DevelopmentDataTests.swift -o "$RUNNER_TEMP/development-data-tests"
+          "$RUNNER_TEMP/development-data-tests" admin-ios/NightwellAdmin/DevelopmentResources/development-library.json
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Create app icon
@@ -38,7 +46,8 @@ jobs:
           set -euo pipefail
           test -f admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist
           test "$(plutil -extract UILaunchStoryboardName raw admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist)" = "LaunchScreen"
-          test "$(plutil -extract CFBundleVersion raw admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist)" = "8"
+          test "$(plutil -extract CFBundleVersion raw admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist)" = "9"
+          test -s admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/DevelopmentResources/development-library.json
           test "$(plutil -extract CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconName raw admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Info.plist)" = "AppIcon"
           test -f admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app/Assets.car
           find admin-build/Build/Products/Release-iphoneos/NightwellAdmin.app -name "LaunchScreen.storyboardc" | grep -q .
@@ -52,3 +61,4 @@ jobs:
           name: NightwellAdmin-iPhone-unsigned-IPA
           path: admin-dist/NightwellAdmin-unsigned.ipa
           if-no-files-found: error
+

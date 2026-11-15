@@ -13,14 +13,20 @@ targets:
     platform: iOS
     sources:
       - path: NightwellAdmin
+        excludes:
+          - DevelopmentResources
+      - path: NightwellAdmin/DevelopmentResources
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fun.nightwell.admin
-        MARKETING_VERSION: '1.5.0'
-        CURRENT_PROJECT_VERSION: '8'
+        MARKETING_VERSION: '1.6.0'
+        CURRENT_PROJECT_VERSION: '9'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Nightwell Admin
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: NightwellAdmin/NightwellAdmin.entitlements
         CODE_SIGN_STYLE: Automatic
+

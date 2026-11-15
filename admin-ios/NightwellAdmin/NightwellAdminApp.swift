@@ -317,6 +317,8 @@ enum TokenVault {
                         .tabItem { Label("Чат", systemImage: "message.fill") }
                     NavigationStack { ServerMonitoringScreen() }
                         .tabItem { Label("Сервер", systemImage: "cpu") }
+                    NavigationStack { AdminDevelopmentScreen() }
+                        .tabItem { Label("Развитие", systemImage: "chart.line.uptrend.xyaxis") }
                     NavigationStack { AdminSettingsScreen() }
                         .tabItem { Label("Настройки", systemImage: "gearshape.fill") }
                 }
@@ -364,4 +366,5 @@ enum TokenVault {
         }
     }
 }
+
 
